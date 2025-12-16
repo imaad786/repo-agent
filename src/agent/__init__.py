@@ -6,7 +6,7 @@ from typing import Optional
 from .code_intelligence_agent import CodeIntelligenceAgent
 from .configure_agent import configure_agent
 
-agent_instance : Optional[CodeIntelligenceAgent] = None
+agent_instance: Optional[CodeIntelligenceAgent] = None
 
 async def initialize_and_get_agent():
     global agent_instance

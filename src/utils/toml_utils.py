@@ -13,7 +13,7 @@ class ToMlUtils:
         """
         Generic getter for nested keys.
         Example:
-            PromptUtils.get("agent_config.toml", "agent", "tools", "general_tool_system_message")
+            ToMlUtils.get("agent_config.toml", "agent", "tools", "general_tool_system_message")
         """
         config = ToMlUtils._load_toml(file_path)
         data = config
