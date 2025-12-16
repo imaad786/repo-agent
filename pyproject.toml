@@ -1,0 +1,31 @@
+[project]
+name = "taazaa-ai-agent-svc"
+version = "0.1.0"
+description = "taazaa-ai-agent-svc"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "aiofiles>=25.1.0",
+    "alembic>=1.17.2",
+    "cowsay>=6.1",
+    "fastapi[standard]>=0.121.3",
+    "httpx>=0.28.1",
+    "langchain>=1.1.3",
+    "langchain-anthropic>=1.2.0",
+    "langchain-core>=1.1.3",
+    "langchain-google-genai>=4.0.0",
+    "langchain-huggingface>=1.1.0",
+    "langchain-mcp-adapters>=0.2.1",
+    "langchain-openai>=1.1.2",
+    "langgraph>=1.0.4",
+    "langgraph-checkpoint-postgres>=3.0.2",
+    "langmem>=0.0.30",
+    "orjson>=3.11.4",
+    "psycopg>=3.2.13",
+    "pydantic-settings>=2.12.0",
+    "python-dotenv>=1.2.1",
+    "sentence-transformers>=5.2.0",
+    "sqlmodel>=0.0.27",
+    "toml>=0.10.2",
+    "torch>=2.9.1",
+]

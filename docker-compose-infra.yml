@@ -1,0 +1,11 @@
+name: taazaa-ai-agent-infra
+services:
+  pg:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: root
+    ports:
+      - "5440:5432"
+    volumes:
+      - ./pg_data:/var/lib/postgresql/data
