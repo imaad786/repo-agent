@@ -1,9 +1,9 @@
 # ---------- Stage 1: build (uses uv, but the system Python 3.13) ----------
-FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim AS builder
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS builder
 
 LABEL author="Ritik Sharma"
 
-# Tell uv to NOT download a managed Python; use system python3.13 in the image
+# Tell uv to NOT download a managed Python; use system python3.12 in the image
 ENV UV_PYTHON_DOWNLOADS=0
 # Optional but nice for cache mounts; not required
 ENV UV_LINK_MODE=copy
@@ -24,8 +24,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 RUN /app/.venv/bin/python -m compileall -q /app
 
 
-# ---------- Stage 2: runtime (NO uv; same system Python 3.13) ----------
-FROM python:3.13-slim-bookworm AS runtime
+# ---------- Stage 2: runtime (NO uv; same system Python 3.12) ----------
+FROM python:3.12-slim-bookworm AS runtime
 
 LABEL author="Ritik Sharma"
 
