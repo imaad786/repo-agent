@@ -1,0 +1,15 @@
+{
+    "mcp": {
+      "changeset_path": ".",
+      "image_base": "agent",
+      "project_path": "./src",
+      "dockerfile": "./Dockerfile",
+      "context_path": "./",
+      "helm_path": "helm/base/mcp",
+      "sonar_key": "TZ_AI_AGENT",
+      "python_version": "3.11",
+      "image_name": "tcr.taazaa.cloud/mcp-dev/agent"
+    }
+
+}
+  

@@ -1,0 +1,389 @@
+
+name: Unified CI/CD Pipeline
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+  push:
+    branches:
+      - deploy/qa
+      - deploy/stage
+      - deploy/production
+      - deploy/dev
+jobs:
+  check-for-changes:
+    runs-on: [self-hosted, linux, taazaa.shared.runner.01]
+    outputs:
+      changed_services: ${{ steps.detect-changes.outputs.changed_services }}
+    steps:
+      - name: Checkout into a new folder
+        uses: actions/checkout@v4
+        with:
+          path: repo
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Configure Git safe directory
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE/repo"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Verify variables.json exists
+        run: |
+          VAR_FILE="repo/.github/workflows/variables.json"
+          if [ ! -f "$VAR_FILE" ]; then
+            echo "❌ variables.json file missing at: $VAR_FILE"
+            exit 1
+          else
+            echo "✅ Found variables.json at: $VAR_FILE"
+          fi
+
+      - name: Validate variables.json syntax
+        run: jq empty repo/.github/workflows/variables.json
+
+      - name: Identify changed services with metadata
+        id: detect-changes
+        run: |
+          cd repo
+          services_file=".github/workflows/variables.json"
+          changed_services=()
+          
+          # Determine base reference based on event type
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            # For PRs, compare against the target branch
+            base_ref="origin/$GITHUB_BASE_REF"
+            echo "Using PR comparison base: $base_ref"
+          else
+            # For push events, compare against the previous commit
+            base_ref="HEAD^"
+            echo "Using push comparison base: $base_ref"
+          fi
+          
+          # Only fetch if needed and not shallow
+          if ! git rev-parse --is-shallow-repository | grep -q false; then
+            git fetch --quiet
+          fi
+          
+          for service in $(jq -r 'keys[]' "$services_file"); do
+            path=$(jq -r --arg s "$service" '.[$s].changeset_path' "$services_file")
+            
+            # Check if path exists in the diff
+            if git diff --name-only $base_ref HEAD -- "$path" | grep -q .; then
+              svc_data=$(jq --arg s "$service" '.[$s]' "$services_file")
+              changed_services+=("$svc_data")
+              echo "✅ Detected change in $service"
+            else
+              echo "⏩ No changes in $service"
+            fi
+          done
+          
+          if [ ${#changed_services[@]} -eq 0 ]; then
+            echo "changed_services=[]" >> $GITHUB_OUTPUT
+            echo "🟢 No services changed"
+          else
+            json_output=$(printf "%s\n" "${changed_services[@]}" | jq -s .)
+            echo "changed_services<<EOF" >> $GITHUB_OUTPUT
+            echo "$json_output" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+            echo "🔴 Changed services: ${#changed_services[@]}"
+          fi
+
+  code-quality-security:
+    name: ${{ matrix.service.name }}-SecurityScanner
+    needs: [check-for-changes]
+    if: github.event_name == 'pull_request' && ( startsWith(github.head_ref, 'feature/') || startsWith(github.head_ref, 'release/') || startsWith(github.head_ref, 'bugfix/') || startsWith(github.head_ref, 'hotfix/')) && needs.check-for-changes.outputs.changed_services != '[]'
+    runs-on: [self-hosted, linux, taazaa.shared.runner.01]
+
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJson(needs.check-for-changes.outputs.changed_services) }}
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+      TCR_USERNAME: ${{ secrets.TCR_USERNAME }}
+      TCR_PASSWORD: ${{ secrets.TCR_PASSWORD }}
+      SONAR_ENVIRONMENT: sonar
+
+    services:
+      docker:
+        image: docker:dind
+        options: >-
+          --privileged
+          -v /var/run/docker.sock:/var/run/docker.sock
+
+    container:
+      image: tcr.taazaa.cloud/devops-shared/gh-dotnet-${{ matrix.service.dotnet_version }}  
+      options: >-
+        --privileged
+        -v /var/run/docker.sock:/var/run/docker.sock
+      credentials:
+        username: ${{ secrets.TCR_USERNAME }}
+        password: ${{ secrets.TCR_PASSWORD }}
+
+    steps:
+      - name: Setup Docker permissions
+        run: |
+          if [ -S /var/run/docker.sock ]; then
+            chmod 666 /var/run/docker.sock
+          fi
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v3
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Verify Java installation
+        run: |
+          java -version
+          echo $JAVA_HOME
+
+      - name: Run Tests with Sonar Coverage and Debugging
+        shell: bash
+        run: |
+          set -euo pipefail      
+          echo "🔧 Starting for service: ${{ matrix.service.name }}"
+          export PROJECT_FOLDER=${{ matrix.service.project_path }}
+          cd $PROJECT_FOLDER
+          export SONAR_PROJECT_KEY="${{ matrix.service.sonar_key }}"
+          export GITHUB_CLONE_DIR="${{ github.workspace }}"
+          export PROJECT_VERSION="${GITHUB_HEAD_REF:-main}-${GITHUB_RUN_NUMBER}"
+          export COV_PATH="${GITHUB_WORKSPACE}/$PROJECT_FOLDER/TestResults/coverage/coverage.cobertura.xml,${GITHUB_WORKSPACE}/$PROJECT_FOLDER/TestResults/coverage/coverage.opencover.xml"
+          export TEST_RESULTS="${GITHUB_WORKSPACE}/$PROJECT_FOLDER/test-results/test-result.xml"
+          export TOOL_DIR="${GITHUB_WORKSPACE}/tools/${GITHUB_RUN_ID}"
+          mkdir -p TestResults/coverage "$TOOL_DIR"
+          dotnet tool install dotnet-sonarscanner --tool-path "$TOOL_DIR"
+          dotnet tool install coverlet.console --version 3.0.0 --tool-path "$TOOL_DIR"
+          export PATH="$TOOL_DIR:$PATH"
+          dotnet restore -s https://nuget.taazaa.cloud/v3/index.json -s https://api.nuget.org/v3/index.json        
+          dotnet add package NunitXml.TestLogger --version 3.1.15
+          dotnet add package JUnitTestLogger --version 1.1.0
+          dotnet add package JunitXml.TestLogger --version 3.0.134
+          dotnet add package coverlet.msbuild
+          dotnet-sonarscanner begin /key:$SONAR_PROJECT_KEY \
+            /d:"sonar.token=${{ secrets.SONAR_TOKEN }}" \
+            /d:"sonar.host.url=${{ secrets.SONAR_HOST_URL }}" \
+            /d:"sonar.cs.nunit.reportsPaths=$TEST_RESULTS" \
+            /d:"sonar.cs.opencover.reportsPaths=$COV_PATH" \
+            /v:"$PROJECT_VERSION" \
+            /d:"sonar.scanner.scanAll=false"
+          dotnet build --no-restore
+          dotnet test --test-adapter-path:. --framework net6.0 \
+            --logger:"nunit;LogFilePath=$TEST_RESULTS" \
+            /p:CollectCoverage=true --collect:"XPlat Code Coverage;Format=cobertura,opencover" \
+            /p:CoverletOutput="$GITHUB_WORKSPACE/$PROJECT_FOLDER/TestResults/coverage/" \
+            /p:CoverletOutputFormat="opencover%2ccobertura"
+          dotnet-sonarscanner end /d:"sonar.token=${{ secrets.SONAR_TOKEN }}"     
+                
+      - name: Install jq (required for Quality Gate check)
+        run: apt-get update && apt-get install -y jq
+
+      - name: Quality Gate Check
+        continue-on-error: true
+        if: always()
+        uses: sonarsource/sonarqube-quality-gate-action@master
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        with:
+          scanMetadataReportFile: ${{ matrix.service.project_path }}/.sonarqube/out/.sonar/report-task.txt
+          pollingTimeoutSec: 300
+
+      - name: Docker Build & Trivy Scan
+        shell: bash
+        run: |
+          export IMAGE_TAG=${{ env.SONAR_ENVIRONMENT }}-${{ github.run_number }}
+          export IMAGE_NAME=${{ matrix.service.image_name }}
+          # Construct build command with arguments
+          BUILD_CMD="docker build -t $IMAGE_NAME:$IMAGE_TAG"
+          BUILD_CMD="$BUILD_CMD -f ${{ matrix.service.dockerfile }}"
+          
+          # Add build arguments with default values (first env value)
+          if [ -n "$(jq -e '.build_args' <<< '${{ toJson(matrix.service) }}')" ]; then
+              for key in $(jq -r '.build_args[]' <<< '${{ toJson(matrix.service) }}'); do
+                  # Get first defined value (e.g., dev value)
+                  value=$(jq -r --arg k "$key" '.build_arg_values[$k].dev // ""' <<< '${{ toJson(matrix.service) }}')
+                  BUILD_CMD="$BUILD_CMD --build-arg $key=\"$value\""
+              done
+          fi
+          
+          BUILD_CMD="$BUILD_CMD ${{ matrix.service.context_path }}"
+          # Execute build command
+          echo "Executing: $BUILD_CMD"
+          eval "$BUILD_CMD"
+          docker tag $IMAGE_NAME:$IMAGE_TAG $IMAGE_NAME:latest
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v $HOME/.cache:/root/.cache tcr.taazaa.cloud/dockerhub/aquasec/trivy:0.56.2 image --debug --format table --exit-code 0 --ignore-unfixed --vuln-type os,library --severity CRITICAL,HIGH --cache-dir /root/.cache/trivy $IMAGE_NAME:$IMAGE_TAG
+
+      - name: Final cleanup of runner workspace & Docker
+        if: always()
+        run: |
+          echo "🧹 Cleaning up workspace and Docker resources..."
+          docker system prune -af --volumes || true
+          rm -rf "${{ github.workspace }}/.sonarqube"
+          rm -rf "${{ github.workspace }}/.scannerwork"
+          rm -rf "${{ github.workspace }}/app-repo"
+          rm -rf "${{ github.workspace }}/**/bin"
+          rm -rf "${{ github.workspace }}/**/obj"
+          rm -rf /tmp/sonar*
+          echo "✅ Cleanup completed."
+
+  build-deploy:
+    name: ${{ matrix.service.name }}-Build & Deploy
+    needs: [check-for-changes]
+    if: github.event_name == 'push' && contains(github.ref, 'deploy/') && needs.check-for-changes.outputs.changed_services != '[]'
+    runs-on: [self-hosted, linux, taazaa.shared.runner.01]
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJson(needs.check-for-changes.outputs.changed_services) }}
+    env:
+      TCR_USERNAME: ${{ secrets.TCR_USERNAME }}
+      TCR_PASSWORD: ${{ secrets.TCR_PASSWORD }}
+      USER_EMAIL: tzbbsa@taazaa.com
+      USER_NAME: Taazaa-Admin
+      MANIFESTS_REPO: git@github.com:taazaainc/TZ-AI-MCP-Helm-Charts.git     
+      MGIT_REPONAME: TZ-AI-MCP-Helm-Charts
+    steps:
+      - name: Checkout application code
+        uses: actions/checkout@v4
+        with:
+          path: app-repo
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract environment from branch
+        run: |
+          ENVIRONMENT=${GITHUB_REF#refs/heads/deploy/}
+          echo "ENVIRONMENT=$ENVIRONMENT" >> $GITHUB_ENV
+          echo "IMAGE_TAG=$ENVIRONMENT-$GITHUB_RUN_NUMBER" >> $GITHUB_ENV
+
+      - name: Configure environment settings
+        run: |
+          case "$ENVIRONMENT" in
+            qa)
+              ENV_PREFIX="mcp-dev"
+              VALUES_FILE="values-qa.yaml"
+              MANIFEST_BRANCH="master"
+              ;;
+            stage)
+              ENV_PREFIX="mcp-stage"
+              VALUES_FILE="values-stage.yaml"
+              MANIFEST_BRANCH="master"
+              ;;
+            dev)
+              ENV_PREFIX="mcp-dev"
+              VALUES_FILE="values-dev.yaml"
+              MANIFEST_BRANCH="master"
+              ;;              
+            production)
+              ENV_PREFIX="mcp-prod"
+              VALUES_FILE="values-prod.yaml"
+              MANIFEST_BRANCH="production"
+              ;;
+            *)
+              echo "::error::Unknown environment: $ENVIRONMENT"
+              exit 1
+              ;;
+          esac
+          echo "REGISTRY_PREFIX=$ENV_PREFIX" >> $GITHUB_ENV
+          echo "VALUES_FILE=$VALUES_FILE" >> $GITHUB_ENV
+          echo "MANIFEST_BRANCH=$MANIFEST_BRANCH" >> $GITHUB_ENV
+
+      - name: Set full image name
+        run: |
+          echo "IMAGE_FULL_NAME=tcr.taazaa.cloud/$REGISTRY_PREFIX/${{ matrix.service.image_base }}" >> $GITHUB_ENV
+
+      - name: Build and push Docker image
+        shell: bash  
+        run: |
+          cd app-repo
+          echo "$TCR_PASSWORD" | docker login tcr.taazaa.cloud -u $TCR_USERNAME --password-stdin
+          # Construct build command with arguments
+          BUILD_CMD="docker build -t $IMAGE_FULL_NAME:$IMAGE_TAG"
+          BUILD_CMD="$BUILD_CMD -f ${{ matrix.service.dockerfile }}"
+          
+          # Add build arguments with environment-specific values
+          if [ -n "$(jq -e '.build_args' <<< '${{ toJson(matrix.service) }}')" ]; then
+              for key in $(jq -r '.build_args[]' <<< '${{ toJson(matrix.service) }}'); do
+                  # Get value for current environment
+                  value=$(jq -r --arg k "$key" --arg env "$ENVIRONMENT" '.build_arg_values[$k][$env] // ""' <<< '${{ toJson(matrix.service) }}')
+                  BUILD_CMD="$BUILD_CMD --build-arg $key=\"$value\""
+              done
+          fi
+          
+          BUILD_CMD="$BUILD_CMD ${{ matrix.service.context_path }}"
+          
+          # Execute build command
+          echo "Executing: $BUILD_CMD"
+          eval "$BUILD_CMD"
+          docker tag $IMAGE_FULL_NAME:$IMAGE_TAG $IMAGE_FULL_NAME:latest          
+          docker push $IMAGE_FULL_NAME:$IMAGE_TAG
+          docker push $IMAGE_FULL_NAME:latest
+
+      - name: Setup SSH for manifest clone
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+          echo "${{ secrets.MANIFESTS_SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+
+      - name: Clone manifests repository
+        run: |
+          echo "${{ env.MANIFESTS_REPO }}"
+          if [ -d "TZ-AI-MCP-Helm-Charts" ]; then
+            rm -rf TZ-AI-MCP-Helm-Charts
+          fi
+          git clone $MANIFESTS_REPO $MGIT_REPONAME
+          cd $MGIT_REPONAME
+          git checkout $MANIFEST_BRANCH
+
+      - name: Update Helm manifest
+        run: |
+          cd $MGIT_REPONAME
+          MANIFEST_FILE="${{ matrix.service.helm_path }}/$VALUES_FILE"
+      
+          # Construct the full image string
+          ORIGINAL_IMAGE="tcr.taazaa.cloud/$REGISTRY_PREFIX/${{ matrix.service.image_base }}"
+          UPDATED_IMAGE="$ORIGINAL_IMAGE:$IMAGE_TAG"
+      
+          # Replace existing image line using sed
+          sed -i "s~$ORIGINAL_IMAGE.*~$UPDATED_IMAGE~g" "$MANIFEST_FILE"
+      
+          echo "✅ Updated image in $MANIFEST_FILE:"
+          grep "$UPDATED_IMAGE" "$MANIFEST_FILE" || echo "❌ Image not found!"
+    
+      - name: Commit and push manifest changes
+        run: |
+          cd $MGIT_REPONAME
+          git config user.email "$USER_EMAIL"
+          git config user.name "$USER_NAME"
+          git add ${{ matrix.service.helm_path }}/$VALUES_FILE || true
+          if git diff --cached --quiet; then
+            echo "⚠️ No changes to commit. Skipping commit and push."
+            exit 0
+          fi
+          git commit -m "Update ${{ matrix.service.name }} to $IMAGE_TAG in $ENVIRONMENT"
+          # Rebase to ensure clean push
+          git pull --rebase origin $MANIFEST_BRANCH || true
+          sleep 5
+          # Initial push attempt
+          if git push origin $MANIFEST_BRANCH; then
+            echo "✅ Manifest changes pushed successfully."
+          else
+            echo "⚠️ Push failed, retrying after rebase and short delay..."
+            sleep $((10 + RANDOM % 10))  # random stagger delay
+            git pull --rebase origin $MANIFEST_BRANCH || true
+            git push origin $MANIFEST_BRANCH || echo "❌ Final push attempt failed. Skipping."
+          fi
+      - name: Post-job cleanup
+        run: |
+          rm -rf "${{ github.workspace }}/TZ-AI-MCP-Helm-Charts"
+          rm -rf "${{ github.workspace }}/app-repo"
