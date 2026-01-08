@@ -224,8 +224,9 @@ class CodeIntelligenceAgent:
             user_id: str,
             session_id: str,
             model_id: Optional[str],
-            repo_namespace: str,
-            message: str
+            task_id: str,
+            repo_namespace: Optional[str] = None,
+            message: str = ""
     ) -> Dict[str, Any]:
         input_message = {"role": "user", "content": message.strip()}
         config = {
@@ -239,6 +240,7 @@ class CodeIntelligenceAgent:
             input={"messages": [input_message]},
             config=config,
             context=ContextSchema(
+                task_id=task_id,
                 repo_namespace=repo_namespace,
                 model_id=model_id,
                 user_id=user_id
@@ -254,12 +256,13 @@ class CodeIntelligenceAgent:
             user_id: str,
             session_id: str,
             model_id: Optional[str],
-            repo_namespace: str,
-            message: str
+            task_id: str,
+            repo_namespace: Optional[str] = None,
+            message: str = ""
     ):
         """
         Stream agent responses with agent progress updates.
-        
+
         Yields:
             Chunk containing state updates after each agent step
         """
@@ -271,12 +274,13 @@ class CodeIntelligenceAgent:
                 "user_id": user_id,
             }
         }
-        
+
         # Stream with updates mode for agent progress
         async for chunk in self._agent_.astream(
             input={"messages": [input_message]},
             config=config,
             context=ContextSchema(
+                task_id=task_id,
                 repo_namespace=repo_namespace,
                 model_id=model_id,
                 user_id=user_id

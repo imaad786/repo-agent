@@ -37,7 +37,8 @@ class AgentChatService:
         session_id: UUID,
         message: str,
         model_id: Optional[str],
-        repo_namespace: str
+        task_id: str,
+        repo_namespace: Optional[str] = None
     ) -> Dict[str, Any]:
         async with DbContext.get_session_async() as session:
             last_order = await self._get_last_message_order(session, session_id)
@@ -47,6 +48,7 @@ class AgentChatService:
                 session_id=str(session_id),
                 message=message,
                 model_id=model_id,
+                task_id=task_id,
                 repo_namespace=repo_namespace
             )
             
@@ -96,23 +98,24 @@ class AgentChatService:
         session_id: UUID,
         message: str,
         model_id: Optional[str],
-        repo_namespace: str
+        task_id: str,
+        repo_namespace: Optional[str] = None
     ):
         """
         Stream agent responses and save messages to database after completion.
-        
+
         Yields:
             Stream chunks containing tokens, agent progress, and metadata
         """
         from ..agent import agent_instance
-        
+
         # Accumulate the full response content
         full_content = ""
-        
+
         # Get initial message order
         async with DbContext.get_session_async() as session:
             last_order = await self._get_last_message_order(session, session_id)
-        
+
         try:
             # Stream responses from agent
             async for chunk in agent_instance.astream(
@@ -120,6 +123,7 @@ class AgentChatService:
                 session_id=str(session_id),
                 message=message,
                 model_id=model_id,
+                task_id=task_id,
                 repo_namespace=repo_namespace
             ):
                 # Agent progress updates - serialize messages in the chunk
