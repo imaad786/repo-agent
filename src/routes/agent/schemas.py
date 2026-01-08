@@ -56,7 +56,7 @@ class ChatRequest(BaseModel):
 
         provider = v.split(":", 1)[0].lower()
         if provider not in ["openai", "anthropic", "google_genai"]:
-            raise ValueError(f"Unsupported provider: {provider}. Supported: openai, anthropic, google")
+            raise ValueError(f"Unsupported provider: {provider}. Supported: openai, anthropic, google_genai")
 
         return v
 

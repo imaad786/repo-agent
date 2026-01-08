@@ -31,6 +31,39 @@ logger = logging.getLogger(__name__)
 
 class AgentChatService:
 
+    @staticmethod
+    def _extract_text_content(content) -> str:
+        """
+        Extract text content from message content.
+
+        Handles both string content (OpenAI) and list content (Anthropic/Google).
+
+        Args:
+            content: Message content - can be str, list of dicts, or other
+
+        Returns:
+            Extracted text as string
+        """
+        if content is None:
+            return ""
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            # Handle list of content blocks (Anthropic/Google format)
+            text_parts = []
+            for item in content:
+                if isinstance(item, str):
+                    text_parts.append(item)
+                elif isinstance(item, dict):
+                    # Extract text from content block dict
+                    if item.get("type") == "text":
+                        text_parts.append(item.get("text", ""))
+                    elif "text" in item:
+                        text_parts.append(item.get("text", ""))
+            return "".join(text_parts)
+        # Fallback: try to convert to string
+        return str(content) if content else ""
+
     async def post_message(
         self,
         user_id: UUID,
@@ -133,11 +166,13 @@ class AgentChatService:
                         # Streaming AI/LLM response tokens
                         if 'ai_content' not in serialized_chunk:
                             serialized_chunk['ai_content'] = ""
-                        
+
                         # Accumulate content for both full response and chunk
+                        # Use helper to handle both str (OpenAI) and list (Anthropic/Google) content
                         if x.content:
-                            full_content += x.content
-                            serialized_chunk['ai_content'] += x.content
+                            text_content = self._extract_text_content(x.content)
+                            full_content += text_content
+                            serialized_chunk['ai_content'] += text_content
                         
                         # Include tool call chunks if AI is invoking tools
                         if hasattr(x, 'tool_call_chunks') and x.tool_call_chunks:
