@@ -20,7 +20,7 @@ from .schemas import (
     MessageResponse,
     ErrorResponse
 )
-from ...services import agent_session_service, agent_chat_service
+from ...services import agent_session_service, agent_chat_service, session_cache_service
 from ...agent import agent_instance
 
 logger = logging.getLogger(__name__)
@@ -48,6 +48,14 @@ async def create_session(
             task_id=request.task_id,
             repo_namespace=request.repo_namespace,
             title=request.title,
+        )
+
+        # Cache the session data for future chat requests
+        session_cache_service.set(
+            session_id=session.id,
+            user_id=session.user_id,
+            task_id=session.task_id,
+            repo_namespace=session.repo_namespace
         )
 
         return SessionResponse.model_validate(session)
@@ -98,21 +106,19 @@ async def list_sessions(
 
 @router.get("/agent/sessions/{session_id}", response_model=SessionResponse)
 async def get_session(
-    session_id: UUID = Path(..., description="Session UUID"),
-    user_id: UUID = Query(..., description="User UUID")
+    session_id: UUID = Path(..., description="Session UUID")
 ):
     """
     Get a specific chat session.
 
     Args:
         session_id: Session UUID
-        user_id: User UUID (for authorization)
 
     Returns:
         Session details
     """
     try:
-        session = await agent_session_service.get_session(session_id, user_id)
+        session = await agent_session_service.get_session(session_id)
 
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
@@ -129,8 +135,7 @@ async def get_session(
 @router.patch("/agent/sessions/{session_id}", response_model=SessionResponse)
 async def update_session(
     request: UpdateSessionRequest,
-    session_id: UUID = Path(..., description="Session UUID"),
-    user_id: UUID = Query(..., description="User UUID")
+    session_id: UUID = Path(..., description="Session UUID")
 ):
     """
     Update a chat session.
@@ -138,7 +143,6 @@ async def update_session(
     Args:
         request: Update request
         session_id: Session UUID
-        user_id: User UUID (for authorization)
 
     Returns:
         Updated session
@@ -146,7 +150,6 @@ async def update_session(
     try:
         session = await agent_session_service.update_session(
             session_id=session_id,
-            user_id=user_id,
             title=request.title,
             status=request.status,
         )
@@ -165,21 +168,22 @@ async def update_session(
 
 @router.delete("/agent/sessions/{session_id}", status_code=204)
 async def delete_session(
-    session_id: UUID = Path(..., description="Session UUID"),
-    user_id: UUID = Query(..., description="User UUID")
+    session_id: UUID = Path(..., description="Session UUID")
 ):
     """
     Delete (soft) a chat session.
 
     Args:
         session_id: Session UUID
-        user_id: User UUID (for authorization)
     """
     try:
-        deleted = await agent_session_service.delete_session(session_id, user_id)
+        deleted = await agent_session_service.delete_session(session_id)
 
         if not deleted:
             raise HTTPException(status_code=404, detail="Session not found")
+
+        # Invalidate cache for deleted session (runs in background, non-blocking)
+        session_cache_service.invalidate_background(session_id)
 
     except HTTPException:
         raise
@@ -193,7 +197,6 @@ async def delete_session(
 @router.get("/agent/sessions/{session_id}/messages", response_model=MessageListResponse)
 async def get_messages(
     session_id: UUID = Path(..., description="Session UUID"),
-    user_id: UUID = Query(..., description="User UUID"),
     limit: int = Query(100, ge=1, le=500, description="Maximum number of messages to return"),
     offset: int = Query(0, ge=0, description="Number of messages to skip")
 ):
@@ -202,7 +205,6 @@ async def get_messages(
 
     Args:
         session_id: Session UUID
-        user_id: User UUID (for authorization)
         limit: Maximum number of messages
         offset: Pagination offset
 
@@ -210,8 +212,8 @@ async def get_messages(
         List of messages
     """
     try:
-        # Verify session exists and user has access
-        session = await agent_session_service.get_session(session_id, user_id)
+        # Verify session exists
+        session = await agent_session_service.get_session(session_id)
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
 
@@ -238,41 +240,52 @@ async def get_messages(
 @router.post("/agent/sessions/{session_id}/chat", response_model=ChatResponse)
 async def chat(
     request: ChatRequest,
-    session_id: UUID = Path(..., description="Session UUID"),
-    user_id: UUID = Query(..., description="User UUID")
+    session_id: UUID = Path(..., description="Session UUID")
 ):
     """
     Send a message to the agent (synchronous, non-streaming).
 
     Args:
-        request: Chat request with message and configuration
-        session_id: Session UUID
-        user_id: User UUID (for authorization)
+        request: Chat request with message and model_id
+        session_id: Session UUID (used to retrieve user_id, task_id, repo_namespace)
 
     Returns:
         Chat response with user and assistant messages
     """
     try:
-        # Verify session exists and user has access
-        session = await agent_session_service.get_session(session_id, user_id)
-        if not session:
-            raise HTTPException(status_code=404, detail="Session not found")
+        # Try to get session data from cache first
+        cached_session = session_cache_service.get(session_id)
 
-        # Verify task_id matches session (primary isolation key)
-        if session.task_id != request.task_id:
-            raise HTTPException(
-                status_code=400,
-                detail=f"task_id mismatch: session uses '{session.task_id}'"
+        if cached_session:
+            user_id = cached_session.user_id
+            task_id = str(cached_session.task_id)
+            repo_namespace = cached_session.repo_namespace
+        else:
+            # Cache miss - fetch from database (no user_id filter needed)
+            session = await agent_session_service.get_session(session_id)
+            if not session:
+                raise HTTPException(status_code=404, detail="Session not found")
+
+            # Cache the session data for future requests
+            session_cache_service.set(
+                session_id=session.id,
+                user_id=session.user_id,
+                task_id=session.task_id,
+                repo_namespace=session.repo_namespace
             )
 
-        # Post message to agent
+            user_id = session.user_id
+            task_id = str(session.task_id)
+            repo_namespace = session.repo_namespace
+
+        # Post message to agent (all context extracted from session)
         response = await agent_chat_service.post_message(
             user_id=user_id,
             session_id=session_id,
             message=request.message,
             model_id=request.model_id,
-            task_id=str(request.task_id),
-            repo_namespace=request.repo_namespace
+            task_id=task_id,
+            repo_namespace=repo_namespace
         )
 
         return ChatResponse(
@@ -294,44 +307,55 @@ async def chat(
 @router.post("/agent/sessions/{session_id}/chat/stream")
 async def chat_stream(
     request: ChatRequest,
-    session_id: UUID = Path(..., description="Session UUID"),
-    user_id: UUID = Query(..., description="User UUID")
+    session_id: UUID = Path(..., description="Session UUID")
 ):
     """
     Send a message to the agent with streaming response (Server-Sent Events).
 
     Args:
-        request: Chat request with message and configuration
-        session_id: Session UUID
-        user_id: User UUID (for authorization)
+        request: Chat request with message and model_id
+        session_id: Session UUID (used to retrieve user_id, task_id, repo_namespace)
 
     Returns:
         Streaming response with SSE chunks containing LLM tokens and agent progress
     """
     try:
-        # Verify session exists and user has access
-        session = await agent_session_service.get_session(session_id, user_id)
-        if not session:
-            raise HTTPException(status_code=404, detail="Session not found")
+        # Try to get session data from cache first
+        cached_session = session_cache_service.get(session_id)
 
-        # Verify task_id matches session (primary isolation key)
-        if session.task_id != request.task_id:
-            raise HTTPException(
-                status_code=400,
-                detail=f"task_id mismatch: session uses '{session.task_id}'"
+        if cached_session:
+            user_id = cached_session.user_id
+            task_id = str(cached_session.task_id)
+            repo_namespace = cached_session.repo_namespace
+        else:
+            # Cache miss - fetch from database (no user_id filter needed)
+            session = await agent_session_service.get_session(session_id)
+            if not session:
+                raise HTTPException(status_code=404, detail="Session not found")
+
+            # Cache the session data for future requests
+            session_cache_service.set(
+                session_id=session.id,
+                user_id=session.user_id,
+                task_id=session.task_id,
+                repo_namespace=session.repo_namespace
             )
+
+            user_id = session.user_id
+            task_id = str(session.task_id)
+            repo_namespace = session.repo_namespace
 
         async def event_generator():
             """Generate SSE events from agent stream."""
             try:
-                # Stream responses from agent
+                # Stream responses from agent (all context from session)
                 async for chunk in agent_chat_service.stream_message(
                     user_id=user_id,
                     session_id=session_id,
                     message=request.message,
                     model_id=request.model_id,
-                    task_id=str(request.task_id),
-                    repo_namespace=request.repo_namespace
+                    task_id=task_id,
+                    repo_namespace=repo_namespace
                 ):
                     # Format as SSE
                     chunk_json = json.dumps(chunk)
