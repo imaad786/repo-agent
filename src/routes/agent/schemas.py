@@ -12,13 +12,15 @@ from pydantic import BaseModel, Field, field_validator
 class CreateSessionRequest(BaseModel):
     """Request to create a new chat session."""
     title: Optional[str] = Field(None, max_length=500, description="Session title")
-    repo_namespace: str = Field(..., max_length=500, description="Repository namespace (e.g., 'org/repo')")
+    task_id: UUID = Field(..., description="Task UUID identifying the indexing task for data isolation")
+    repo_namespace: Optional[str] = Field(None, max_length=500, description="Repository namespace (e.g., 'org/repo') - optional for additional filtering/metadata")
+
     @field_validator('repo_namespace')
     @classmethod
-    def validate_repo_namespace(cls, v: str) -> str:
-        if not v or not v.strip():
-            raise ValueError("repo_namespace cannot be empty")
-        return v.strip()
+    def validate_repo_namespace(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            return v.strip() if v.strip() else None
+        return v
 
 
 class UpdateSessionRequest(BaseModel):
@@ -38,33 +40,34 @@ class ChatRequest(BaseModel):
     """Request to send a message to the agent."""
     message: str = Field(..., min_length=1, description="User message")
     model_id: str = Field(..., description="LLM model identifier (e.g., 'openai:gpt-4', 'anthropic:claude-3-5-sonnet-20241022')")
-    repo_namespace: str = Field(..., max_length=500, description="Repository namespace for context")
-    
+    task_id: UUID = Field(..., description="Task UUID identifying the indexing task for data isolation")
+    repo_namespace: Optional[str] = Field(None, max_length=500, description="Repository namespace for context - optional for additional filtering/metadata")
+
     @field_validator('message')
     @classmethod
     def validate_message(cls, v: str) -> str:
         if not v or not v.strip():
             raise ValueError("message cannot be empty")
         return v.strip()
-    
+
     @field_validator('model_id')
     @classmethod
     def validate_model_id(cls, v: str) -> str:
         if not v or ":" not in v:
             raise ValueError("model_id must be in format 'provider:model-name' (e.g., 'openai:gpt-4')")
-        
+
         provider = v.split(":", 1)[0].lower()
         if provider not in ["openai", "anthropic", "google_genai"]:
             raise ValueError(f"Unsupported provider: {provider}. Supported: openai, anthropic, google")
-        
+
         return v
-    
+
     @field_validator('repo_namespace')
     @classmethod
-    def validate_repo_namespace(cls, v: str) -> str:
-        if not v or not v.strip():
-            raise ValueError("repo_namespace cannot be empty")
-        return v.strip()
+    def validate_repo_namespace(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            return v.strip() if v.strip() else None
+        return v
 
 
 # Response Schemas
@@ -74,11 +77,12 @@ class SessionResponse(BaseModel):
     id: UUID
     user_id: UUID
     title: Optional[str]
-    repo_namespace: str
+    task_id: UUID
+    repo_namespace: Optional[str]
     status: str
     created_on: datetime
     modified_on: datetime
-    
+
     class Config:
         from_attributes = True
 

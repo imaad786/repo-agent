@@ -45,6 +45,7 @@ async def create_session(
     try:
         session = await agent_session_service.create_session(
             user_id=user_id,
+            task_id=request.task_id,
             repo_namespace=request.repo_namespace,
             title=request.title,
         )
@@ -257,11 +258,11 @@ async def chat(
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
 
-        # Verify repo_namespace matches session
-        if session.repo_namespace != request.repo_namespace:
+        # Verify task_id matches session (primary isolation key)
+        if session.task_id != request.task_id:
             raise HTTPException(
                 status_code=400,
-                detail=f"repo_namespace mismatch: session uses '{session.repo_namespace}'"
+                detail=f"task_id mismatch: session uses '{session.task_id}'"
             )
 
         # Post message to agent
@@ -270,6 +271,7 @@ async def chat(
             session_id=session_id,
             message=request.message,
             model_id=request.model_id,
+            task_id=str(request.task_id),
             repo_namespace=request.repo_namespace
         )
 
@@ -312,11 +314,11 @@ async def chat_stream(
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
 
-        # Verify repo_namespace matches session
-        if session.repo_namespace != request.repo_namespace:
+        # Verify task_id matches session (primary isolation key)
+        if session.task_id != request.task_id:
             raise HTTPException(
                 status_code=400,
-                detail=f"repo_namespace mismatch: session uses '{session.repo_namespace}'"
+                detail=f"task_id mismatch: session uses '{session.task_id}'"
             )
 
         async def event_generator():
@@ -328,6 +330,7 @@ async def chat_stream(
                     session_id=session_id,
                     message=request.message,
                     model_id=request.model_id,
+                    task_id=str(request.task_id),
                     repo_namespace=request.repo_namespace
                 ):
                     # Format as SSE

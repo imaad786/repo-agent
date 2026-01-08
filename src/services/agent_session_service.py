@@ -15,7 +15,8 @@ class AgentSessionService:
     async def create_session(
             self,
             user_id: UUID,
-            repo_namespace: str,
+            task_id: UUID,
+            repo_namespace: Optional[str] = None,
             title: Optional[str] = None,
     ) -> AgentChatSession:
         async with DbContext.get_session_async() as session:
@@ -24,6 +25,7 @@ class AgentSessionService:
 
             chat_session = AgentChatSession(
                 user_id=user_id,
+                task_id=task_id,
                 repo_namespace=repo_namespace,
                 title=title,
                 status="ACTIVE",
@@ -33,7 +35,7 @@ class AgentSessionService:
             await session.commit()
             await session.refresh(chat_session)
 
-            logger.info(f"Created chat session {chat_session.id} for user {user_id}")
+            logger.info(f"Created chat session {chat_session.id} for user {user_id} with task {task_id}")
             return chat_session
 
     async def get_session(
