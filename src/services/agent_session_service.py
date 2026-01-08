@@ -89,16 +89,13 @@ class AgentSessionService:
     async def update_session(
             self,
             session_id: UUID,
-            user_id: UUID,
             title: Optional[str] = None,
             status: Optional[str] = None,
-            model_id: Optional[str] = None
     ) -> Optional[AgentChatSession]:
         async with DbContext.get_session_async() as session:
             query = select(AgentChatSession).where(
                 and_(
                     AgentChatSession.id == session_id,
-                    AgentChatSession.user_id == user_id,
                     AgentChatSession.is_deleted == False
                 )
             )
@@ -113,8 +110,6 @@ class AgentSessionService:
                 chat_session.title = title
             if status is not None:
                 chat_session.status = status
-            if model_id is not None:
-                chat_session.model_id = model_id
 
             chat_session.modified_on = datetime.now(UTC)
 
@@ -128,13 +123,11 @@ class AgentSessionService:
     async def delete_session(
             self,
             session_id: UUID,
-            user_id: UUID
     ) -> bool:
         async with DbContext.get_session_async() as session:
             query = select(AgentChatSession).where(
                 and_(
                     AgentChatSession.id == session_id,
-                    AgentChatSession.user_id == user_id,
                     AgentChatSession.is_deleted == False
                 )
             )

@@ -40,8 +40,6 @@ class ChatRequest(BaseModel):
     """Request to send a message to the agent."""
     message: str = Field(..., min_length=1, description="User message")
     model_id: str = Field(..., description="LLM model identifier (e.g., 'openai:gpt-4', 'anthropic:claude-3-5-sonnet-20241022')")
-    task_id: UUID = Field(..., description="Task UUID identifying the indexing task for data isolation")
-    repo_namespace: Optional[str] = Field(None, max_length=500, description="Repository namespace for context - optional for additional filtering/metadata")
 
     @field_validator('message')
     @classmethod
@@ -60,13 +58,6 @@ class ChatRequest(BaseModel):
         if provider not in ["openai", "anthropic", "google_genai"]:
             raise ValueError(f"Unsupported provider: {provider}. Supported: openai, anthropic, google")
 
-        return v
-
-    @field_validator('repo_namespace')
-    @classmethod
-    def validate_repo_namespace(cls, v: Optional[str]) -> Optional[str]:
-        if v is not None:
-            return v.strip() if v.strip() else None
         return v
 
 

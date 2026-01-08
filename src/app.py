@@ -9,6 +9,7 @@ from .exceptions.global_handler import register_global_exception_handlers
 from .middlewares.request_logger_middleware import add_request_logger_middleware
 from .routes import hello_world_router, agent_router
 from .db.context import DbContext
+from .services import session_cache_service
 from . import entities
 
 
@@ -21,9 +22,16 @@ async def lifespan(app: FastAPI):
         await agent_instance.startup()
         app.state.agent = agent_instance
         await agent_instance.save_graph_png()
+
+        # Start background cache cleanup task
+        await session_cache_service.start_background_cleanup()
+
         yield
 
     finally:
+        # Stop background cache cleanup task
+        await session_cache_service.stop_background_cleanup()
+
         if agent_instance:
             await agent_instance.shutdown()
         await DbContext.dispose_engine()
