@@ -15,7 +15,13 @@ config = context.config
 # This line sets up loggers basically.
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
-config.set_main_option('sqlalchemy.url', settings.database_url)
+
+# Convert async database URL to sync for Alembic migrations
+sync_db_url = settings.database_url
+sync_db_url = sync_db_url.replace('+asyncpg', '').replace('+psycopg', '')
+if '+psycopg2' not in sync_db_url:
+    sync_db_url = sync_db_url.replace('postgresql://', 'postgresql+psycopg2://')
+config.set_main_option('sqlalchemy.url', sync_db_url)
 # add your model's MetaData object here
 # for 'autogenerate' support
 # from myapp import mymodel
