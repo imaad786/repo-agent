@@ -7,7 +7,8 @@ from fastapi.responses import ORJSONResponse
 from .agent import initialize_and_get_agent
 from .exceptions.global_handler import register_global_exception_handlers
 from .middlewares.request_logger_middleware import add_request_logger_middleware
-from .routes import hello_world_router, agent_router
+from .routes import hello_world_router, agent_router, deep_analysis_router
+from .workers import start_deep_analysis_worker, stop_deep_analysis_worker
 from .db.context import DbContext
 from .services import session_cache_service
 from . import entities
@@ -26,9 +27,15 @@ async def lifespan(app: FastAPI):
         # Start background cache cleanup task
         await session_cache_service.start_background_cleanup()
 
+        # Start deep analysis background worker
+        await start_deep_analysis_worker()
+
         yield
 
     finally:
+        # Stop deep analysis background worker
+        await stop_deep_analysis_worker()
+
         # Stop background cache cleanup task
         await session_cache_service.stop_background_cleanup()
 
@@ -73,6 +80,7 @@ def setup_application():
     # Register routers
     app.include_router(hello_world_router, prefix="/api/v1/hello-world", tags=["Hello World"])
     app.include_router(agent_router, prefix="/api/v1", tags=["Code Intelligence Agent"])
+    app.include_router(deep_analysis_router, prefix="/api/v1", tags=["Deep Analysis"])
 
     register_global_exception_handlers(app)
     add_request_logger_middleware(app)

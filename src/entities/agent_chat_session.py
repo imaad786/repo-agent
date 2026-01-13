@@ -2,10 +2,11 @@
 Agent chat session entity for code intelligence conversations.
 """
 from enum import Enum
-from typing import Optional
+from typing import Optional, Dict
 from uuid import UUID
 
-from sqlmodel import Field
+from sqlmodel import Field, Column
+from sqlalchemy.dialects.postgresql import JSONB
 
 from .base import BaseEntityMixin
 from ..utils.settings import settings
@@ -36,3 +37,6 @@ class AgentChatSession(BaseEntityMixin, table=True):
     repo_namespace: Optional[str] = Field(default=None, index=True, max_length=500)
 
     status: str = Field(default=ChatSessionStatus.ACTIVE.value, max_length=50)
+
+    # Metadata for additional context (e.g., analysis run info)
+    session_metadata: Optional[Dict] = Field(default=None, sa_column=Column(JSONB))
