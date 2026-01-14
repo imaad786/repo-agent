@@ -1,23 +1,29 @@
 """
 Agent module initialization.
+
+Provides access to the agent registry for managing multiple specialized agents.
 """
-from typing import Optional
-
 from .code_intelligence_agent import CodeIntelligenceAgent
-from .configure_agent import configure_agent
-
-agent_instance: Optional[CodeIntelligenceAgent] = None
-
-async def initialize_and_get_agent():
-    global agent_instance
-    if agent_instance is None:
-        agent_instance = await configure_agent()
-    return agent_instance
-
+from .agent_types import AgentType
+from .agent_registry import (
+    AgentRegistry,
+    initialize_registry,
+    get_registry,
+    shutdown_registry
+)
+from .prompt_loader import load_prompt, reload_prompts
 
 __all__ = [
+    # Agent class
     "CodeIntelligenceAgent",
-    "configure_agent",
-    "agent_instance",
-    "initialize_and_get_agent",
+    # Agent types
+    "AgentType",
+    # Registry
+    "AgentRegistry",
+    "initialize_registry",
+    "get_registry",
+    "shutdown_registry",
+    # Prompts
+    "load_prompt",
+    "reload_prompts",
 ]

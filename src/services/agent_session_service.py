@@ -6,6 +6,7 @@ from uuid import UUID
 
 from ..db.context import DbContext
 from ..entities import AgentChatSession
+from ..agent.agent_types import AgentType
 
 logger = logging.getLogger(__name__)
 
@@ -18,16 +19,25 @@ class AgentSessionService:
             task_id: UUID,
             repo_namespace: Optional[str] = None,
             title: Optional[str] = None,
+            agent_type: str = AgentType.GENERAL.value,
     ) -> AgentChatSession:
         async with DbContext.get_session_async() as session:
             if not title:
                 title = f"Chat - {datetime.now(UTC).strftime('%Y-%m-%d %H:%M')}"
+
+            # Validate agent_type
+            if agent_type not in AgentType.values():
+                raise ValueError(
+                    f"Invalid agent type: {agent_type}. "
+                    f"Valid types: {AgentType.values()}"
+                )
 
             chat_session = AgentChatSession(
                 user_id=user_id,
                 task_id=task_id,
                 repo_namespace=repo_namespace,
                 title=title,
+                agent_type=agent_type,
                 status="ACTIVE",
             )
 
@@ -63,6 +73,7 @@ class AgentSessionService:
             self,
             user_id: UUID,
             status: Optional[str] = None,
+            agent_type: Optional[str] = None,
             limit: int = 50,
             offset: int = 0
     ) -> List[AgentChatSession]:
@@ -76,6 +87,9 @@ class AgentSessionService:
 
             if status:
                 query = query.where(AgentChatSession.status == status)
+
+            if agent_type:
+                query = query.where(AgentChatSession.agent_type == agent_type)
 
             from sqlmodel import desc
             query = query.order_by(desc(AgentChatSession.modified_on))

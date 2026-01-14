@@ -24,6 +24,7 @@ dependencies = [
     "psycopg>=3.2.13",
     "pydantic-settings>=2.12.0",
     "python-dotenv>=1.2.1",
+    "rich>=14.2.0",
     "sentence-transformers>=5.2.0",
     "sqlmodel>=0.0.27",
     "toml>=0.10.2",

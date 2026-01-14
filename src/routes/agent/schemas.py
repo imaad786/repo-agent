@@ -6,6 +6,8 @@ from uuid import UUID
 from datetime import datetime
 from pydantic import BaseModel, Field, field_validator
 
+from ...agent.agent_types import AgentType
+
 
 # Request Schemas
 
@@ -14,12 +16,23 @@ class CreateSessionRequest(BaseModel):
     title: Optional[str] = Field(None, max_length=500, description="Session title")
     task_id: UUID = Field(..., description="Task UUID identifying the indexing task for data isolation")
     repo_namespace: Optional[str] = Field(None, max_length=500, description="Repository namespace (e.g., 'org/repo') - optional for additional filtering/metadata")
+    agent_type: str = Field(
+        default=AgentType.GENERAL.value,
+        description=f"Type of agent for this session. Valid types: {AgentType.values()}"
+    )
 
     @field_validator('repo_namespace')
     @classmethod
     def validate_repo_namespace(cls, v: Optional[str]) -> Optional[str]:
         if v is not None:
             return v.strip() if v.strip() else None
+        return v
+
+    @field_validator('agent_type')
+    @classmethod
+    def validate_agent_type(cls, v: str) -> str:
+        if v not in AgentType.values():
+            raise ValueError(f"agent_type must be one of: {AgentType.values()}")
         return v
 
 
@@ -70,6 +83,7 @@ class SessionResponse(BaseModel):
     title: Optional[str]
     task_id: UUID
     repo_namespace: Optional[str]
+    agent_type: str
     status: str
     created_on: datetime
     modified_on: datetime
