@@ -21,7 +21,7 @@ from .schemas import (
     ErrorResponse
 )
 from ...services import agent_session_service, agent_chat_service, session_cache_service
-from ...agent import agent_instance
+from ...agent.agent_types import AgentType
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ async def create_session(
     Create a new agent chat session.
 
     Args:
-        request: Session creation request
+        request: Session creation request with agent_type
         user_id: User UUID
 
     Returns:
@@ -48,6 +48,7 @@ async def create_session(
             task_id=request.task_id,
             repo_namespace=request.repo_namespace,
             title=request.title,
+            agent_type=request.agent_type,
         )
 
         # Cache the session data for future chat requests
@@ -55,11 +56,15 @@ async def create_session(
             session_id=session.id,
             user_id=session.user_id,
             task_id=session.task_id,
-            repo_namespace=session.repo_namespace
+            repo_namespace=session.repo_namespace,
+            agent_type=session.agent_type
         )
 
         return SessionResponse.model_validate(session)
 
+    except ValueError as e:
+        logger.warning(f"Validation error creating session: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.exception(f"Error creating session: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to create session: {str(e)}")
@@ -69,6 +74,7 @@ async def create_session(
 async def list_sessions(
     user_id: UUID = Query(..., description="User UUID"),
     status: Optional[str] = Query(None, description="Filter by status (ACTIVE, ARCHIVED, ENDED)"),
+    agent_type: Optional[str] = Query(None, description=f"Filter by agent type. Valid types: {AgentType.values()}"),
     limit: int = Query(50, ge=1, le=100, description="Maximum number of sessions to return"),
     offset: int = Query(0, ge=0, description="Number of sessions to skip")
 ):
@@ -78,6 +84,7 @@ async def list_sessions(
     Args:
         user_id: User UUID
         status: Optional status filter
+        agent_type: Optional agent type filter
         limit: Maximum number of sessions
         offset: Pagination offset
 
@@ -85,9 +92,14 @@ async def list_sessions(
         List of sessions
     """
     try:
+        # Validate agent_type if provided
+        if agent_type and agent_type not in AgentType.values():
+            raise ValueError(f"Invalid agent_type: {agent_type}. Valid types: {AgentType.values()}")
+
         sessions = await agent_session_service.list_sessions(
             user_id=user_id,
             status=status,
+            agent_type=agent_type,
             limit=limit,
             offset=offset
         )
@@ -99,6 +111,9 @@ async def list_sessions(
             offset=offset
         )
 
+    except ValueError as e:
+        logger.warning(f"Validation error listing sessions: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.exception(f"Error listing sessions: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to list sessions: {str(e)}")
@@ -247,7 +262,7 @@ async def chat(
 
     Args:
         request: Chat request with message and model_id
-        session_id: Session UUID (used to retrieve user_id, task_id, repo_namespace)
+        session_id: Session UUID (used to retrieve user_id, task_id, repo_namespace, agent_type)
 
     Returns:
         Chat response with user and assistant messages
@@ -260,6 +275,7 @@ async def chat(
             user_id = cached_session.user_id
             task_id = str(cached_session.task_id)
             repo_namespace = cached_session.repo_namespace
+            agent_type = cached_session.agent_type
         else:
             # Cache miss - fetch from database (no user_id filter needed)
             session = await agent_session_service.get_session(session_id)
@@ -271,12 +287,14 @@ async def chat(
                 session_id=session.id,
                 user_id=session.user_id,
                 task_id=session.task_id,
-                repo_namespace=session.repo_namespace
+                repo_namespace=session.repo_namespace,
+                agent_type=session.agent_type
             )
 
             user_id = session.user_id
             task_id = str(session.task_id)
             repo_namespace = session.repo_namespace
+            agent_type = session.agent_type
 
         # Post message to agent (all context extracted from session)
         response = await agent_chat_service.post_message(
@@ -285,7 +303,8 @@ async def chat(
             message=request.message,
             model_id=request.model_id,
             task_id=task_id,
-            repo_namespace=repo_namespace
+            repo_namespace=repo_namespace,
+            agent_type=agent_type
         )
 
         return ChatResponse(
@@ -314,7 +333,7 @@ async def chat_stream(
 
     Args:
         request: Chat request with message and model_id
-        session_id: Session UUID (used to retrieve user_id, task_id, repo_namespace)
+        session_id: Session UUID (used to retrieve user_id, task_id, repo_namespace, agent_type)
 
     Returns:
         Streaming response with SSE chunks containing LLM tokens and agent progress
@@ -327,6 +346,7 @@ async def chat_stream(
             user_id = cached_session.user_id
             task_id = str(cached_session.task_id)
             repo_namespace = cached_session.repo_namespace
+            agent_type = cached_session.agent_type
         else:
             # Cache miss - fetch from database (no user_id filter needed)
             session = await agent_session_service.get_session(session_id)
@@ -338,12 +358,14 @@ async def chat_stream(
                 session_id=session.id,
                 user_id=session.user_id,
                 task_id=session.task_id,
-                repo_namespace=session.repo_namespace
+                repo_namespace=session.repo_namespace,
+                agent_type=session.agent_type
             )
 
             user_id = session.user_id
             task_id = str(session.task_id)
             repo_namespace = session.repo_namespace
+            agent_type = session.agent_type
 
         async def event_generator():
             """Generate SSE events from agent stream."""
@@ -355,7 +377,8 @@ async def chat_stream(
                     message=request.message,
                     model_id=request.model_id,
                     task_id=task_id,
-                    repo_namespace=repo_namespace
+                    repo_namespace=repo_namespace,
+                    agent_type=agent_type
                 ):
                     # Format as SSE
                     chunk_json = json.dumps(chunk)

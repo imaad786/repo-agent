@@ -20,11 +20,12 @@ DEFAULT_CLEANUP_INTERVAL_SECONDS = 30
 
 @dataclass
 class CachedSessionData:
-    """Cached session data with task_id and repo_namespace."""
+    """Cached session data with task_id, repo_namespace, and agent_type."""
     session_id: UUID
     user_id: UUID
     task_id: UUID
     repo_namespace: Optional[str]
+    agent_type: str
     cached_at: datetime
     ttl_seconds: int = DEFAULT_CACHE_TTL_SECONDS
 
@@ -95,7 +96,8 @@ class SessionCacheService:
         session_id: UUID,
         user_id: UUID,
         task_id: UUID,
-        repo_namespace: Optional[str]
+        repo_namespace: Optional[str],
+        agent_type: str = "general"
     ) -> CachedSessionData:
         """
         Cache session data.
@@ -105,6 +107,7 @@ class SessionCacheService:
             user_id: The user UUID
             task_id: The task UUID for data isolation
             repo_namespace: Optional repository namespace
+            agent_type: Agent type for this session
 
         Returns:
             The cached session data
@@ -114,6 +117,7 @@ class SessionCacheService:
             user_id=user_id,
             task_id=task_id,
             repo_namespace=repo_namespace,
+            agent_type=agent_type,
             cached_at=datetime.now(UTC),
             ttl_seconds=self._ttl_seconds
         )

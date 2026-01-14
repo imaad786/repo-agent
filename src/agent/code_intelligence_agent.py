@@ -29,13 +29,15 @@ class CodeIntelligenceAgent:
             system_prompt: str = "",
             default_llm_model_id: str = "openai:gpt-4o",
             temperature: float = 0.1,
-            base_memory_namespace: str = "code_intelligence_agent_memories"
+            base_memory_namespace: str = "code_intelligence_agent_memories",
+            recursion_limit: int = 50,
     ):
         self._name_ = name
         self._tools_ = tools
         self._embeddings_ = embeddings
         self._system_prompt__ = system_prompt
         self._base_memory_namespace_ = base_memory_namespace
+        self._recursion_limit_ = recursion_limit
 
         self._agent_ = None
         self._checkpointer_ = None
@@ -226,11 +228,12 @@ class CodeIntelligenceAgent:
             model_id: Optional[str],
             task_id: str,
             repo_namespace: Optional[str] = None,
-            message: str = ""
+            message: str = "",
+            recursion_limit: Optional[int] = None,
     ) -> Dict[str, Any]:
         input_message = {"role": "user", "content": message.strip()}
         config = {
-            "recursion_limit": 20,
+            "recursion_limit": recursion_limit if recursion_limit else self._recursion_limit_,
             "configurable": {
                 "thread_id": session_id,
                 "user_id": user_id,
@@ -258,7 +261,8 @@ class CodeIntelligenceAgent:
             model_id: Optional[str],
             task_id: str,
             repo_namespace: Optional[str] = None,
-            message: str = ""
+            message: str = "",
+            recursion_limit: Optional[int] = None,
     ):
         """
         Stream agent responses with agent progress updates.
@@ -268,7 +272,7 @@ class CodeIntelligenceAgent:
         """
         input_message = {"role": "user", "content": message.strip()}
         config = {
-            "recursion_limit": 20,
+            "recursion_limit": recursion_limit if recursion_limit else self._recursion_limit_,
             "configurable": {
                 "thread_id": session_id,
                 "user_id": user_id,

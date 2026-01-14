@@ -9,6 +9,7 @@ from sqlmodel import Field
 
 from .base import BaseEntityMixin
 from ..utils.settings import settings
+from ..agent.agent_types import AgentType
 
 
 class ChatSessionStatus(Enum):
@@ -34,5 +35,8 @@ class AgentChatSession(BaseEntityMixin, table=True):
 
     # Repo namespace is now optional for additional filtering/metadata
     repo_namespace: Optional[str] = Field(default=None, index=True, max_length=500)
+
+    # Agent type determines which specialized agent handles this session
+    agent_type: str = Field(default=AgentType.GENERAL.value, index=True, max_length=50)
 
     status: str = Field(default=ChatSessionStatus.ACTIVE.value, max_length=50)

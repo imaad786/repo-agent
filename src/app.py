@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse
 
-from .agent import initialize_and_get_agent
+from .agent.agent_registry import initialize_registry, shutdown_registry
 from .exceptions.global_handler import register_global_exception_handlers
 from .middlewares.request_logger_middleware import add_request_logger_middleware
 from .routes import hello_world_router, agent_router
@@ -15,13 +15,13 @@ from . import entities
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    agent_instance = None
+    registry = None
     try:
         DbContext.initialize()
-        agent_instance = await initialize_and_get_agent()
-        await agent_instance.startup()
-        app.state.agent = agent_instance
-        await agent_instance.save_graph_png()
+
+        # Initialize agent registry with all agents preloaded
+        registry = await initialize_registry()
+        app.state.registry = registry
 
         # Start background cache cleanup task
         await session_cache_service.start_background_cleanup()
@@ -32,8 +32,9 @@ async def lifespan(app: FastAPI):
         # Stop background cache cleanup task
         await session_cache_service.stop_background_cleanup()
 
-        if agent_instance:
-            await agent_instance.shutdown()
+        # Shutdown the agent registry
+        await shutdown_registry()
+
         await DbContext.dispose_engine()
 
 
