@@ -1,4 +1,3 @@
-
 import logging
 from langchain_core.messages import (
     AIMessageChunk,
@@ -24,6 +23,8 @@ from ..entities import (
     AgentChatSessionLastMessageOrder
 )
 from ..db.context import DbContext
+from ..agent.agent_types import AgentType
+from ..agent.agent_registry import get_registry
 
 
 logger = logging.getLogger(__name__)
@@ -71,12 +72,17 @@ class AgentChatService:
         message: str,
         model_id: Optional[str],
         task_id: str,
-        repo_namespace: Optional[str] = None
+        repo_namespace: Optional[str] = None,
+        agent_type: str = AgentType.GENERAL.value
     ) -> Dict[str, Any]:
         async with DbContext.get_session_async() as session:
             last_order = await self._get_last_message_order(session, session_id)
-            from ..agent import agent_instance
-            response = await agent_instance.ask(
+
+            # Get the appropriate agent from registry based on agent_type
+            registry = get_registry()
+            agent = await registry.get_agent_by_name(agent_type)
+
+            response = await agent.ask(
                 user_id=str(user_id),
                 session_id=str(session_id),
                 message=message,
@@ -132,7 +138,8 @@ class AgentChatService:
         message: str,
         model_id: Optional[str],
         task_id: str,
-        repo_namespace: Optional[str] = None
+        repo_namespace: Optional[str] = None,
+        agent_type: str = AgentType.GENERAL.value
     ):
         """
         Stream agent responses and save messages to database after completion.
@@ -140,7 +147,9 @@ class AgentChatService:
         Yields:
             Stream chunks containing tokens, agent progress, and metadata
         """
-        from ..agent import agent_instance
+        # Get the appropriate agent from registry based on agent_type
+        registry = get_registry()
+        agent = await registry.get_agent_by_name(agent_type)
 
         # Accumulate the full response content
         full_content = ""
@@ -151,7 +160,7 @@ class AgentChatService:
 
         try:
             # Stream responses from agent
-            async for chunk in agent_instance.astream(
+            async for chunk in agent.astream(
                 user_id=str(user_id),
                 session_id=str(session_id),
                 message=message,
