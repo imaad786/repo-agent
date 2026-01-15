@@ -1,5 +1,5 @@
 """
-Service for managing deep analysis insights.
+Service for managing analysis insights.
 """
 import logging
 from datetime import datetime, UTC
@@ -10,13 +10,13 @@ from decimal import Decimal
 from sqlmodel import select, func, and_
 
 from ..db.context import DbContext
-from ..entities import DeepInsight, InsightStatus
+from ..entities import Insight, InsightStatus
 
 logger = logging.getLogger(__name__)
 
 
-class DeepInsightService:
-    """Service for managing deep analysis insights."""
+class InsightService:
+    """Service for managing analysis insights."""
 
     async def create_insight(
         self,
@@ -34,10 +34,10 @@ class DeepInsightService:
         details: Optional[Dict] = None,
         confidence_score: Optional[float] = None,
         agent_model: Optional[str] = None
-    ) -> DeepInsight:
+    ) -> Insight:
         """Create a single insight."""
         async with DbContext.get_session_async() as session:
-            insight = DeepInsight(
+            insight = Insight(
                 task_id=task_id,
                 analysis_run_id=analysis_run_id,
                 category=category,
@@ -70,7 +70,7 @@ class DeepInsightService:
             count = 0
             for data in insights:
                 confidence = data.get("confidence_score")
-                insight = DeepInsight(
+                insight = Insight(
                     task_id=task_id,
                     analysis_run_id=analysis_run_id,
                     category=data.get("category", "unknown"),
@@ -103,25 +103,25 @@ class DeepInsightService:
         file_path: Optional[str] = None,
         limit: int = 100,
         offset: int = 0
-    ) -> List[DeepInsight]:
+    ) -> List[Insight]:
         """List insights with filters."""
         async with DbContext.get_session_async() as session:
-            query = select(DeepInsight).where(DeepInsight.is_deleted == False)
+            query = select(Insight).where(Insight.is_deleted == False)
 
             if task_id:
-                query = query.where(DeepInsight.task_id == task_id)
+                query = query.where(Insight.task_id == task_id)
             if analysis_run_id:
-                query = query.where(DeepInsight.analysis_run_id == analysis_run_id)
+                query = query.where(Insight.analysis_run_id == analysis_run_id)
             if category:
-                query = query.where(DeepInsight.category == category)
+                query = query.where(Insight.category == category)
             if severity:
-                query = query.where(DeepInsight.severity == severity)
+                query = query.where(Insight.severity == severity)
             if status:
-                query = query.where(DeepInsight.status == status)
+                query = query.where(Insight.status == status)
             if file_path:
-                query = query.where(DeepInsight.file_path.ilike(f"%{file_path}%"))
+                query = query.where(Insight.file_path.ilike(f"%{file_path}%"))
 
-            query = query.order_by(DeepInsight.created_on.desc())
+            query = query.order_by(Insight.created_on.desc())
             query = query.limit(limit).offset(offset)
 
             result = await session.execute(query)
@@ -131,40 +131,40 @@ class DeepInsightService:
         """Get insights summary for a task."""
         async with DbContext.get_session_async() as session:
             base_filter = and_(
-                DeepInsight.task_id == task_id,
-                DeepInsight.is_deleted == False
+                Insight.task_id == task_id,
+                Insight.is_deleted == False
             )
 
             # Total count
             total_result = await session.execute(
-                select(func.count(DeepInsight.id)).where(base_filter)
+                select(func.count(Insight.id)).where(base_filter)
             )
             total = total_result.scalar() or 0
 
             # By severity
             severity_result = await session.execute(
                 select(
-                    DeepInsight.severity,
-                    func.count(DeepInsight.id)
-                ).where(base_filter).group_by(DeepInsight.severity)
+                    Insight.severity,
+                    func.count(Insight.id)
+                ).where(base_filter).group_by(Insight.severity)
             )
             by_severity = {row[0]: row[1] for row in severity_result}
 
             # By category
             category_result = await session.execute(
                 select(
-                    DeepInsight.category,
-                    func.count(DeepInsight.id)
-                ).where(base_filter).group_by(DeepInsight.category)
+                    Insight.category,
+                    func.count(Insight.id)
+                ).where(base_filter).group_by(Insight.category)
             )
             by_category = {row[0]: row[1] for row in category_result}
 
             # By status
             status_result = await session.execute(
                 select(
-                    DeepInsight.status,
-                    func.count(DeepInsight.id)
-                ).where(base_filter).group_by(DeepInsight.status)
+                    Insight.status,
+                    func.count(Insight.id)
+                ).where(base_filter).group_by(Insight.status)
             )
             by_status = {row[0]: row[1] for row in status_result}
 
@@ -181,11 +181,11 @@ class DeepInsightService:
         status: str,
         resolved_by: Optional[UUID] = None,
         resolution_notes: Optional[str] = None
-    ) -> Optional[DeepInsight]:
+    ) -> Optional[Insight]:
         """Update insight workflow status."""
         async with DbContext.get_session_async() as session:
             result = await session.execute(
-                select(DeepInsight).where(DeepInsight.id == insight_id)
+                select(Insight).where(Insight.id == insight_id)
             )
             insight = result.scalar_one_or_none()
 
@@ -209,4 +209,4 @@ class DeepInsightService:
 
 
 # Singleton instance
-deep_insight_service = DeepInsightService()
+insight_service = InsightService()

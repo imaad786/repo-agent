@@ -1,4 +1,4 @@
-from .routes import router as deep_analysis_router
+from .routes import router as analysis_router
 from .schemas import (
     TriggerAnalysisRequest,
     AnalysisRunResponse,
@@ -10,7 +10,7 @@ from .schemas import (
 )
 
 __all__ = [
-    "deep_analysis_router",
+    "analysis_router",
     "TriggerAnalysisRequest",
     "AnalysisRunResponse",
     "AnalysisRunDetailResponse",

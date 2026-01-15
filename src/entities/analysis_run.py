@@ -1,5 +1,5 @@
 """
-Deep analysis run entity for background worker processing.
+Analysis run entity for background worker processing.
 """
 from typing import Optional, List, Dict
 from uuid import UUID
@@ -13,8 +13,8 @@ from .base import BaseEntityMixin
 from ..utils.settings import settings
 
 
-class DeepAnalysisRunStatus:
-    """Status values for deep analysis runs."""
+class AnalysisRunStatus:
+    """Status values for analysis runs."""
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -22,9 +22,9 @@ class DeepAnalysisRunStatus:
     CANCELLED = "cancelled"
 
 
-class DeepAnalysisRun(BaseEntityMixin, table=True):
+class AnalysisRun(BaseEntityMixin, table=True):
     """
-    Represents a batch of deep analysis across multiple categories.
+    Represents a batch of analysis across multiple categories.
 
     One run contains multiple categories (stored as JSONB array).
     Background worker polls for pending runs and processes them.
@@ -32,19 +32,19 @@ class DeepAnalysisRun(BaseEntityMixin, table=True):
     Worker locking fields (worker_id, locked_at) enable optimistic
     locking to prevent multiple workers from processing the same run.
     """
-    __tablename__ = "deep_analysis_runs"
+    __tablename__ = "analysis_runs"
     __table_args__ = {"schema": settings.database_schema}
 
     # Context / Data Isolation
     task_id: UUID = Field(nullable=False, index=True)
     user_id: UUID = Field(nullable=False, index=True)
+    repo_namespace: Optional[str] = Field(default=None, max_length=500, index=True)
 
-    # Analysis Configuration
+    # Analysis Configuration (all agent types, parallel execution)
     categories: List[str] = Field(sa_column=Column(JSONB, nullable=False))
-    execution_mode: str = Field(default="parallel", max_length=20)
 
     # Status & Progress
-    status: str = Field(default=DeepAnalysisRunStatus.PENDING, max_length=20, index=True)
+    status: str = Field(default=AnalysisRunStatus.PENDING, max_length=20, index=True)
     triggered_by: Optional[str] = Field(default=None, max_length=100)
 
     # Timing

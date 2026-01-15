@@ -1,5 +1,5 @@
 """
-Deep insight entity for analysis findings.
+Insight entity for analysis findings.
 """
 from typing import Optional, Dict
 from uuid import UUID
@@ -32,22 +32,22 @@ class InsightStatus:
     WONT_FIX = "wont_fix"
 
 
-class DeepInsight(BaseEntityMixin, table=True):
+class Insight(BaseEntityMixin, table=True):
     """
-    Represents a single finding/insight from deep analysis.
+    Represents a single finding/insight from analysis.
 
     Can be linked to a specific analysis run and has workflow status
     for tracking resolution. Includes location information (file, lines)
     and recommendations for fixing issues.
     """
-    __tablename__ = "deep_insights"
+    __tablename__ = "insights"
     __table_args__ = {"schema": settings.database_schema}
 
     # Context
     task_id: UUID = Field(nullable=False, index=True)
     analysis_run_id: Optional[UUID] = Field(
         default=None,
-        foreign_key=f"{settings.database_schema}.deep_analysis_runs.id",
+        foreign_key=f"{settings.database_schema}.analysis_runs.id",
         index=True
     )
 

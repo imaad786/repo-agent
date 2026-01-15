@@ -1,5 +1,5 @@
 """
-Service for managing deep analysis runs.
+Service for managing analysis runs.
 """
 import logging
 from datetime import datetime, UTC
@@ -9,13 +9,13 @@ from uuid import UUID
 from sqlmodel import select, and_
 
 from ..db.context import DbContext
-from ..entities import DeepAnalysisRun, DeepAnalysisRunStatus, DeepAnalysisSession
+from ..entities import AnalysisRun, AnalysisRunStatus, AnalysisSession
 
 logger = logging.getLogger(__name__)
 
 
-class DeepAnalysisService:
-    """Service for managing deep analysis runs."""
+class AnalysisService:
+    """Service for managing analysis runs."""
 
     # ─────────────────────────────────────────────────────────────────
     # CRUD Operations
@@ -26,18 +26,18 @@ class DeepAnalysisService:
         task_id: UUID,
         user_id: UUID,
         categories: List[str],
-        execution_mode: str = "parallel",
+        repo_namespace: Optional[str] = None,
         triggered_by: Optional[str] = None
-    ) -> DeepAnalysisRun:
+    ) -> AnalysisRun:
         """Create a new analysis run."""
         async with DbContext.get_session_async() as session:
-            run = DeepAnalysisRun(
+            run = AnalysisRun(
                 task_id=task_id,
                 user_id=user_id,
+                repo_namespace=repo_namespace,
                 categories=categories,
-                execution_mode=execution_mode,
                 triggered_by=triggered_by,
-                status=DeepAnalysisRunStatus.PENDING
+                status=AnalysisRunStatus.PENDING
             )
             session.add(run)
             await session.commit()
@@ -45,14 +45,14 @@ class DeepAnalysisService:
             logger.info(f"Created analysis run {run.id} for task {task_id}")
             return run
 
-    async def get_run(self, run_id: UUID) -> Optional[DeepAnalysisRun]:
+    async def get_run(self, run_id: UUID) -> Optional[AnalysisRun]:
         """Get analysis run by ID."""
         async with DbContext.get_session_async() as session:
             result = await session.execute(
-                select(DeepAnalysisRun).where(
+                select(AnalysisRun).where(
                     and_(
-                        DeepAnalysisRun.id == run_id,
-                        DeepAnalysisRun.is_deleted == False
+                        AnalysisRun.id == run_id,
+                        AnalysisRun.is_deleted == False
                     )
                 )
             )
@@ -65,21 +65,21 @@ class DeepAnalysisService:
         status: Optional[str] = None,
         limit: int = 50,
         offset: int = 0
-    ) -> List[DeepAnalysisRun]:
+    ) -> List[AnalysisRun]:
         """List analysis runs with filters."""
         async with DbContext.get_session_async() as session:
-            query = select(DeepAnalysisRun).where(
-                DeepAnalysisRun.is_deleted == False
+            query = select(AnalysisRun).where(
+                AnalysisRun.is_deleted == False
             )
 
             if task_id:
-                query = query.where(DeepAnalysisRun.task_id == task_id)
+                query = query.where(AnalysisRun.task_id == task_id)
             if user_id:
-                query = query.where(DeepAnalysisRun.user_id == user_id)
+                query = query.where(AnalysisRun.user_id == user_id)
             if status:
-                query = query.where(DeepAnalysisRun.status == status)
+                query = query.where(AnalysisRun.status == status)
 
-            query = query.order_by(DeepAnalysisRun.created_on.desc())
+            query = query.order_by(AnalysisRun.created_on.desc())
             query = query.limit(limit).offset(offset)
 
             result = await session.execute(query)
@@ -89,7 +89,7 @@ class DeepAnalysisService:
     # Worker Locking
     # ─────────────────────────────────────────────────────────────────
 
-    async def get_next_pending_run(self, worker_id: str) -> Optional[DeepAnalysisRun]:
+    async def get_next_pending_run(self, worker_id: str) -> Optional[AnalysisRun]:
         """
         Get and lock the next pending run.
 
@@ -98,13 +98,13 @@ class DeepAnalysisService:
         """
         async with DbContext.get_session_async() as session:
             # Find oldest pending, unlocked run
-            query = select(DeepAnalysisRun).where(
+            query = select(AnalysisRun).where(
                 and_(
-                    DeepAnalysisRun.status == DeepAnalysisRunStatus.PENDING,
-                    DeepAnalysisRun.is_deleted == False,
-                    DeepAnalysisRun.worker_id == None
+                    AnalysisRun.status == AnalysisRunStatus.PENDING,
+                    AnalysisRun.is_deleted == False,
+                    AnalysisRun.worker_id == None
                 )
-            ).order_by(DeepAnalysisRun.created_on).limit(1)
+            ).order_by(AnalysisRun.created_on).limit(1)
 
             result = await session.execute(query)
             run = result.scalar_one_or_none()
@@ -128,7 +128,7 @@ class DeepAnalysisService:
         """Clear worker lock after processing."""
         async with DbContext.get_session_async() as session:
             result = await session.execute(
-                select(DeepAnalysisRun).where(DeepAnalysisRun.id == run_id)
+                select(AnalysisRun).where(AnalysisRun.id == run_id)
             )
             run = result.scalar_one_or_none()
 
@@ -150,11 +150,11 @@ class DeepAnalysisService:
         status: str,
         error_message: Optional[str] = None,
         insights_summary: Optional[Dict] = None
-    ) -> Optional[DeepAnalysisRun]:
+    ) -> Optional[AnalysisRun]:
         """Update run status with optional error/summary."""
         async with DbContext.get_session_async() as session:
             result = await session.execute(
-                select(DeepAnalysisRun).where(DeepAnalysisRun.id == run_id)
+                select(AnalysisRun).where(AnalysisRun.id == run_id)
             )
             run = result.scalar_one_or_none()
 
@@ -165,11 +165,11 @@ class DeepAnalysisService:
             run.modified_on = datetime.now(UTC)
 
             # Set timing based on status
-            if status == DeepAnalysisRunStatus.RUNNING and not run.started_at:
+            if status == AnalysisRunStatus.RUNNING and not run.started_at:
                 run.started_at = datetime.now(UTC)
-            elif status in [DeepAnalysisRunStatus.COMPLETED,
-                           DeepAnalysisRunStatus.FAILED,
-                           DeepAnalysisRunStatus.CANCELLED]:
+            elif status in [AnalysisRunStatus.COMPLETED,
+                           AnalysisRunStatus.FAILED,
+                           AnalysisRunStatus.CANCELLED]:
                 run.completed_at = datetime.now(UTC)
 
             if error_message is not None:
@@ -184,11 +184,11 @@ class DeepAnalysisService:
             logger.info(f"Updated run {run_id} status to {status}")
             return run
 
-    async def cancel_run(self, run_id: UUID) -> Optional[DeepAnalysisRun]:
+    async def cancel_run(self, run_id: UUID) -> Optional[AnalysisRun]:
         """Cancel a pending or running analysis."""
         return await self.update_run_status(
             run_id,
-            status=DeepAnalysisRunStatus.CANCELLED
+            status=AnalysisRunStatus.CANCELLED
         )
 
     # ─────────────────────────────────────────────────────────────────
@@ -200,10 +200,10 @@ class DeepAnalysisService:
         run_id: UUID,
         session_id: UUID,
         category: str
-    ) -> DeepAnalysisSession:
+    ) -> AnalysisSession:
         """Link a chat session to an analysis run."""
         async with DbContext.get_session_async() as session:
-            link = DeepAnalysisSession(
+            link = AnalysisSession(
                 analysis_run_id=run_id,
                 chat_session_id=session_id,
                 category=category
@@ -214,14 +214,14 @@ class DeepAnalysisService:
             logger.info(f"Linked session {session_id} to run {run_id} for {category}")
             return link
 
-    async def get_sessions_for_run(self, run_id: UUID) -> List[DeepAnalysisSession]:
+    async def get_sessions_for_run(self, run_id: UUID) -> List[AnalysisSession]:
         """Get all sessions linked to a run."""
         async with DbContext.get_session_async() as session:
             result = await session.execute(
-                select(DeepAnalysisSession).where(
+                select(AnalysisSession).where(
                     and_(
-                        DeepAnalysisSession.analysis_run_id == run_id,
-                        DeepAnalysisSession.is_deleted == False
+                        AnalysisSession.analysis_run_id == run_id,
+                        AnalysisSession.is_deleted == False
                     )
                 )
             )
@@ -229,4 +229,4 @@ class DeepAnalysisService:
 
 
 # Singleton instance
-deep_analysis_service = DeepAnalysisService()
+analysis_service = AnalysisService()
