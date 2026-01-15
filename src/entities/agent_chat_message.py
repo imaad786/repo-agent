@@ -31,3 +31,6 @@ class AgentChatMessage(BaseEntityMixin, table=True):
     meta_data: Optional[Dict[str, Any]] = Field(sa_column=Column(JSONB, nullable=True))
 
     message_order: int = Field(nullable=False, index=True)
+
+    # Flag to indicate this message is part of an analysis query (for smart UI rendering)
+    is_analysis_query: bool = Field(default=False, nullable=False)

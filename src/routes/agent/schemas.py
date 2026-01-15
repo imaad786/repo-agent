@@ -100,6 +100,7 @@ class MessageResponse(BaseModel):
     artifacts: Optional[Dict[str, Any]] = None
     meta_data: Optional[Dict[str, Any]] = None
     message_order: int
+    is_analysis_query: bool = False
     created_on: Optional[str] = None
 
 

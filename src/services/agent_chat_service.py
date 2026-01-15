@@ -73,7 +73,8 @@ class AgentChatService:
         model_id: Optional[str],
         task_id: str,
         repo_namespace: Optional[str] = None,
-        agent_type: str = AgentType.GENERAL.value
+        agent_type: str = AgentType.GENERAL.value,
+        is_analysis_query: bool = False
     ) -> Dict[str, Any]:
         async with DbContext.get_session_async() as session:
             last_order = await self._get_last_message_order(session, session_id)
@@ -90,7 +91,7 @@ class AgentChatService:
                 task_id=task_id,
                 repo_namespace=repo_namespace
             )
-            
+
             user_message = AgentChatMessage(
                 chat_session_id=session_id,
                 role="USER",
@@ -98,9 +99,10 @@ class AgentChatService:
                     "content": message,
                     "model_id": model_id
                 },
-                message_order=last_order + 1
+                message_order=last_order + 1,
+                is_analysis_query=is_analysis_query
             )
-            
+
             assistant_message = AgentChatMessage(
                 chat_session_id=session_id,
                 role="ASSISTANT",
@@ -115,9 +117,10 @@ class AgentChatService:
                     "usage_metadata": response.get("usage_metadata", {}),
                     "raw_messages": response.get("raw_messages", [])
                 },
-                message_order=last_order + 2
+                message_order=last_order + 2,
+                is_analysis_query=is_analysis_query
             )
-            
+
             session.add(user_message)
             session.add(assistant_message)
             await session.commit()
@@ -139,7 +142,8 @@ class AgentChatService:
         model_id: Optional[str],
         task_id: str,
         repo_namespace: Optional[str] = None,
-        agent_type: str = AgentType.GENERAL.value
+        agent_type: str = AgentType.GENERAL.value,
+        is_analysis_query: bool = False
     ):
         """
         Stream agent responses and save messages to database after completion.
@@ -282,9 +286,10 @@ class AgentChatService:
                         "content": message,
                         "model_id": model_id
                     },
-                    message_order=last_order + 1
+                    message_order=last_order + 1,
+                    is_analysis_query=is_analysis_query
                 )
-                
+
                 assistant_message = AgentChatMessage(
                     chat_session_id=session_id,
                     role="ASSISTANT",
@@ -299,7 +304,8 @@ class AgentChatService:
                         "usage_metadata": {},
                         "raw_messages": []
                     },
-                    message_order=last_order + 2
+                    message_order=last_order + 2,
+                    is_analysis_query=is_analysis_query
                 )
                 
                 session.add(user_message)
@@ -422,6 +428,7 @@ class AgentChatService:
             "artifacts": message.artifacts,
             "meta_data": message.meta_data,
             "message_order": message.message_order,
+            "is_analysis_query": message.is_analysis_query,
             "created_on": message.created_on.isoformat() if message.created_on else None
         }
 

@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 from sqlmodel import SQLModel, Field
+from sqlalchemy import DateTime
 
 
 def utcnow() -> datetime:
@@ -16,16 +17,11 @@ class BaseEntityMixin(SQLModel, table=False):
 
     created_on: datetime = Field(
         default_factory=utcnow,
-        # sa_column_kwargs={
-        #     "server_default": func.now(),          # DB sets on insert
-        # },
+        sa_type=DateTime(timezone=True),
         nullable=False,
     )
     modified_on: datetime = Field(
         default_factory=utcnow,
-        sa_column_kwargs={
-            # "server_default": func.now(),          # initial value on insert
-            "onupdate": utcnow,  # DB updates on UPDATE
-        },
+        sa_type=DateTime(timezone=True),
         nullable=False,
     )
