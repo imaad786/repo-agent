@@ -41,6 +41,8 @@ async def trigger_analysis(request: TriggerAnalysisRequest):
     All agent types will be analyzed in parallel.
     Returns 202 Accepted immediately - analysis runs asynchronously.
     """
+    logger.info(f"Received analysis trigger from indexer service for task {request.task_id}")
+    
     # Use all agent types for comprehensive analysis
     categories = AgentType.values()
 
