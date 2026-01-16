@@ -5,9 +5,9 @@ from .env_utils import EnvUtils
 
 
 class Settings(BaseSettings):
-    host: str = Field(alias="HOST")
-    port: int = Field(alias="PORT", ge=1, le=65535)
-    workers: int = Field(alias="WORKERS", ge=1)
+    host: str = Field(alias="HOST", default="0.0.0.0")
+    port: int = Field(alias="PORT", default=8080, ge=1, le=65535)
+    workers: int = Field(alias="WORKERS", default=1, ge=1)
 
     database_url: str = Field(alias="DATABASE_URL")
     database_schema: str = Field(alias="DATABASE_SCHEMA", default="public")
