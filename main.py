@@ -17,3 +17,4 @@ if __name__ == "__main__":
         reload=EnvUtils.is_local_environment(),
         reload_dirs=["src"] if EnvUtils.is_local_environment() else None,
     )
+
