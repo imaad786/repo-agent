@@ -171,14 +171,17 @@ class AnalysisWorker:
         summary = extract_insights_summary(all_insights)
         summary["by_category_details"] = category_results
 
-        # Update run as completed with summary
+        # Determine final status based on results
+        final_status = self._determine_run_status(category_results)
+
+        # Update run with determined status and summary
         await analysis_service.update_run_status(
             run.id,
-            status=AnalysisRunStatus.COMPLETED,
+            status=final_status,
             insights_summary=summary
         )
 
-        logger.info(f"Run {run.id} completed: {len(all_insights)} total insights")
+        logger.info(f"Run {run.id} finished with status {final_status}: {len(all_insights)} total insights")
 
     async def _process_category(
         self,
@@ -275,6 +278,39 @@ class AnalysisWorker:
         )
 
         return insights, session.id
+
+    def _determine_run_status(self, category_results: Dict[str, Any]) -> str:
+        """
+        Determine the final run status based on category results.
+
+        Args:
+            category_results: Dict mapping category names to their results
+
+        Returns:
+            AnalysisRunStatus: COMPLETED, PARTIAL_SUCCESS, or FAILED
+        """
+        if not category_results:
+            return AnalysisRunStatus.FAILED
+
+        successful_count = 0
+        failed_count = 0
+
+        for category, result in category_results.items():
+            if "error" in result:
+                failed_count += 1
+            else:
+                successful_count += 1
+
+        # All categories succeeded
+        if failed_count == 0:
+            return AnalysisRunStatus.COMPLETED
+
+        # All categories failed
+        if successful_count == 0:
+            return AnalysisRunStatus.FAILED
+
+        # Mix of success and failure
+        return AnalysisRunStatus.PARTIAL_SUCCESS
 
 
 class AnalysisWorkerManager:
