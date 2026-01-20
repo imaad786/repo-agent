@@ -9,3 +9,4 @@ class ContextSchema(BaseModel):
     repo_namespace: Optional[str] = None  # Optional: Repository URL for additional filtering/metadata
     model_id: Optional[str] = None
     memories_injected: bool = False
+    is_analysis_followup: bool = False  # True when this is a follow-up question on an analysis session

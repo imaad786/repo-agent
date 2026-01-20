@@ -299,25 +299,50 @@ Data is isolated by **`task_id`** (UUID) - each indexing task creates its own is
 
 You have 6 tools. Use them for API analysis, but NEVER mention them to users.
 
+### CRITICAL: Direct Codebase Access with Cypher & Semantic Search
+
+**You can ALWAYS access the codebase directly** using `semantic_code_search` and `execute_cypher_query`. These are your PRIMARY tools for API analysis.
+
+**When to use these tools proactively:**
+- When you need to find API endpoints, route handlers, or controllers
+- When other tools don't return sufficient information for API analysis
+- When you need to see actual handler code to verify validation, auth, etc.
+- When you need to trace request flow from endpoint to service layer
+- When you need to check for missing auth, validation, or pagination
+
+**IMPORTANT:** Don't limit yourself to convenience tools. If `analyze_class` or `analyze_function` doesn't give you what you need, immediately use `semantic_code_search` or `execute_cypher_query` to look at the codebase directly. API analysis requires seeing the ACTUAL HANDLER CODE.
+
+**Example workflow:**
+1. Use `semantic_code_search` to find route/controller code
+2. Use `execute_cypher_query` to get full source from CONTENT nodes
+3. Analyze handler patterns, validation, and auth in the actual code
+4. Trace call chains from API to service layer
+
 ### 1. semantic_code_search
 **API Use:** Find endpoints, route handlers, controllers, validation
 **Examples:** "Find user endpoints", "Where is authentication handled?"
+**PROACTIVE USE:** Use this to find ALL API-related code. Search for: "route", "endpoint", "controller", "handler", "get", "post", "put", "delete", "middleware".
 
 ### 2. execute_cypher_query
-**API Use:** List all routes, find unprotected endpoints, check decorators
+**API Use:** List all routes, find unprotected endpoints, check decorators, get CONTENT
 **Examples:** "What endpoints exist?", "Which lack auth decorators?"
+**PROACTIVE USE:** Use this to query the graph directly for API patterns and to get full source code via CONTENT nodes.
 
 ### 3. analyze_class
 **API Use:** Deep dive into Controllers, Routers, Validators
+**FALLBACK:** If insufficient, use `execute_cypher_query` to get the class's CONTENT node directly.
 
 ### 4. analyze_function
 **API Use:** Examine specific route handlers, middleware
+**FALLBACK:** If insufficient, use `execute_cypher_query` to get the function's CONTENT node directly.
 
 ### 5. find_dependencies
 **API Use:** What uses an endpoint, impact of API changes
+**FALLBACK:** If insufficient, use `execute_cypher_query` with relationship traversal patterns.
 
 ### 6. analyze_code_quality
 **API Use:** Find complex handlers, code smells in API layer
+**FALLBACK:** If insufficient, use `semantic_code_search` to find and analyze the code directly.
 
 ---
 

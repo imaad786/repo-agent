@@ -20,11 +20,13 @@ from sqlmodel import select, and_, func
 
 from ..entities import (
     AgentChatMessage,
-    AgentChatSessionLastMessageOrder
+    AgentChatSessionLastMessageOrder,
+    AgentChatSession
 )
 from ..db.context import DbContext
 from ..agent.agent_types import AgentType
 from ..agent.agent_registry import get_registry
+from .agent_session_service import agent_session_service
 
 
 logger = logging.getLogger(__name__)
@@ -65,6 +67,31 @@ class AgentChatService:
         # Fallback: try to convert to string
         return str(content) if content else ""
 
+    async def _has_analysis_messages(self, session: Any, session_id: UUID) -> bool:
+        """
+        Check if the session has any analysis query messages.
+
+        This is used to detect follow-up questions on analysis sessions,
+        which need special handling to switch from JSON to conversational responses.
+
+        Args:
+            session: Database session
+            session_id: Chat session UUID
+
+        Returns:
+            True if the session has analysis query messages
+        """
+        query = select(func.count(AgentChatMessage.id)).where(
+            and_(
+                AgentChatMessage.chat_session_id == session_id,
+                AgentChatMessage.is_analysis_query == True,
+                AgentChatMessage.is_deleted == False
+            )
+        )
+        result = await session.execute(query)
+        count = result.scalar()
+        return count > 0
+
     async def post_message(
         self,
         user_id: UUID,
@@ -79,6 +106,15 @@ class AgentChatService:
         async with DbContext.get_session_async() as session:
             last_order = await self._get_last_message_order(session, session_id)
 
+            # Check if this is a follow-up on an analysis session
+            # This flag is passed to the agent via context to trigger dynamic system prompt
+            is_analysis_followup = False
+            if not is_analysis_query:
+                has_analysis = await self._has_analysis_messages(session, session_id)
+                if has_analysis:
+                    is_analysis_followup = True
+                    logger.info(f"Follow-up detected on analysis session {session_id}")
+
             # Get the appropriate agent from registry based on agent_type
             registry = get_registry()
             agent = await registry.get_agent_by_name(agent_type)
@@ -89,7 +125,8 @@ class AgentChatService:
                 message=message,
                 model_id=model_id,
                 task_id=task_id,
-                repo_namespace=repo_namespace
+                repo_namespace=repo_namespace,
+                is_analysis_followup=is_analysis_followup
             )
 
             user_message = AgentChatMessage(
@@ -103,11 +140,14 @@ class AgentChatService:
                 is_analysis_query=is_analysis_query
             )
 
+            # Extract text content from response (handles mixed list/string formats)
+            extracted_content = self._extract_text_content(response["content"])
+
             assistant_message = AgentChatMessage(
                 chat_session_id=session_id,
                 role="ASSISTANT",
                 message={
-                    "content": response["content"],
+                    "content": extracted_content,
                     "model_id": model_id
                 },
                 artifacts={
@@ -128,6 +168,14 @@ class AgentChatService:
             await session.refresh(assistant_message)
 
             await self._update_last_message_order(session, session_id, last_order + 2)
+
+            # Auto-generate title after first message (if not an analysis query)
+            if last_order == 0 and not is_analysis_query:
+                # Get the session to check if title needs generation
+                chat_session = await session.get(AgentChatSession, session_id)
+                if chat_session and agent_session_service.needs_title_generation(chat_session.title):
+                    agent_session_service.generate_title_background(session_id, message)
+
             return {
                 "user_message": self._serialize_message(user_message),
                 "assistant_message": self._serialize_message(assistant_message),
@@ -158,9 +206,19 @@ class AgentChatService:
         # Accumulate the full response content
         full_content = ""
 
-        # Get initial message order
+        # Check if this is a follow-up on an analysis session
+        # This flag is passed to the agent via context to trigger dynamic system prompt
+        is_analysis_followup = False
+
+        # Get initial message order and check for analysis messages
         async with DbContext.get_session_async() as session:
             last_order = await self._get_last_message_order(session, session_id)
+
+            if not is_analysis_query:
+                has_analysis = await self._has_analysis_messages(session, session_id)
+                if has_analysis:
+                    is_analysis_followup = True
+                    logger.info(f"Follow-up detected on analysis session {session_id}")
 
         try:
             # Stream responses from agent
@@ -170,7 +228,8 @@ class AgentChatService:
                 message=message,
                 model_id=model_id,
                 task_id=task_id,
-                repo_namespace=repo_namespace
+                repo_namespace=repo_namespace,
+                is_analysis_followup=is_analysis_followup
             ):
                 # Agent progress updates - serialize messages in the chunk
                 serialized_chunk = {}
@@ -313,9 +372,16 @@ class AgentChatService:
                 await session.commit()
                 await session.refresh(user_message)
                 await session.refresh(assistant_message)
-                
+
                 await self._update_last_message_order(session, session_id, last_order + 2)
-                
+
+                # Auto-generate title after first message (if not an analysis query)
+                if last_order == 0 and not is_analysis_query:
+                    # Get the session to check if title needs generation
+                    chat_session = await session.get(AgentChatSession, session_id)
+                    if chat_session and agent_session_service.needs_title_generation(chat_session.title):
+                        agent_session_service.generate_title_background(session_id, message)
+
                 # Yield completion metadata with saved message IDs
                 yield {
                     "type": "metadata",
@@ -326,7 +392,7 @@ class AgentChatService:
                         "assistant_message": self._serialize_message(assistant_message),
                     }
                 }
-        
+
         except Exception as e:
             logger.exception(f"Error in stream_message: {e}")
             yield {

@@ -300,25 +300,50 @@ Data is isolated by **`task_id`** (UUID) - each indexing task creates its own is
 
 You have 6 tools. Use them for testing analysis, but NEVER mention them to users.
 
+### CRITICAL: Direct Codebase Access with Cypher & Semantic Search
+
+**You can ALWAYS access the codebase directly** using `semantic_code_search` and `execute_cypher_query`. These are your PRIMARY tools for testing analysis.
+
+**When to use these tools proactively:**
+- When you need to find test files, test patterns, or untested code
+- When other tools don't return sufficient information for testing analysis
+- When you need to see actual test code to understand testing patterns
+- When you need to find coverage gaps or missing test scenarios
+- When you need to understand dependencies for mocking
+
+**IMPORTANT:** Don't limit yourself to convenience tools. If `analyze_class` or `analyze_function` doesn't give you what you need, immediately use `semantic_code_search` or `execute_cypher_query` to look at the codebase directly. Testing analysis requires seeing the ACTUAL CODE AND TESTS.
+
+**Example workflow:**
+1. Use `semantic_code_search` to find test files and test patterns
+2. Use `execute_cypher_query` to find untested code and coverage gaps
+3. Analyze test quality in the actual code
+4. Trace dependencies to identify mocking requirements
+
 ### 1. semantic_code_search
 **Testing Use:** Find test files, untested code, test patterns
 **Examples:** "Find tests for user service", "Where are the unit tests?"
+**PROACTIVE USE:** Use this to find ALL testing-related code. Search for: "test", "spec", "mock", "fixture", "assert", "expect", "should".
 
 ### 2. execute_cypher_query
-**Testing Use:** Find code without tests, test coverage gaps, test relationships
+**Testing Use:** Find code without tests, test coverage gaps, test relationships, get CONTENT
 **Examples:** "What functions have no tests?", "What does this test cover?"
+**PROACTIVE USE:** Use this to query the graph directly for test coverage patterns and to get full source code via CONTENT nodes.
 
 ### 3. analyze_class
 **Testing Use:** Understand class to write tests for, review test class
+**FALLBACK:** If insufficient, use `execute_cypher_query` to get the class's CONTENT node directly.
 
 ### 4. analyze_function
 **Testing Use:** Understand function's edge cases, review test function
+**FALLBACK:** If insufficient, use `execute_cypher_query` to get the function's CONTENT node directly.
 
 ### 5. find_dependencies
 **Testing Use:** What needs mocking, integration test scope
+**FALLBACK:** If insufficient, use `execute_cypher_query` with relationship traversal patterns.
 
 ### 6. analyze_code_quality
 **Testing Use:** Find complex code (needs more tests), code smells
+**FALLBACK:** If insufficient, use `semantic_code_search` to find and analyze the code directly.
 
 ---
 

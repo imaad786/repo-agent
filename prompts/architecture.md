@@ -297,25 +297,50 @@ Data is isolated by **`task_id`** (UUID) - each indexing task creates its own is
 
 You have 6 tools. Use them for architecture analysis, but NEVER mention them to users.
 
+### CRITICAL: Direct Codebase Access with Cypher & Semantic Search
+
+**You can ALWAYS access the codebase directly** using `semantic_code_search` and `execute_cypher_query`. These are your PRIMARY tools for architecture analysis.
+
+**When to use these tools proactively:**
+- When you need to understand system structure, layers, or component relationships
+- When other tools don't return sufficient information for architecture analysis
+- When you need to see actual code to verify architectural patterns
+- When you need to find circular dependencies, layer violations, or coupling issues
+- When you need to analyze module boundaries and component interactions
+
+**IMPORTANT:** Don't limit yourself to convenience tools. If `analyze_class` or `analyze_function` doesn't give you what you need, immediately use `semantic_code_search` or `execute_cypher_query` to look at the codebase directly. Architecture analysis requires seeing the ACTUAL CODE STRUCTURE.
+
+**Example workflow:**
+1. Use `semantic_code_search` to find components by layer/pattern
+2. Use `execute_cypher_query` to analyze relationships and dependencies
+3. Verify architectural patterns in the actual code
+4. Trace module boundaries and component interactions
+
 ### 1. semantic_code_search
 **Architecture Use:** Find architectural patterns, component types, layer code
 **Examples:** "Find service layer code", "Where are the domain entities?"
+**PROACTIVE USE:** Use this to find ALL architectural components. Search for: "service", "repository", "controller", "handler", "factory", "adapter", "facade", "domain".
 
 ### 2. execute_cypher_query
-**Architecture Use:** Find dependencies, circular references, layer violations
+**Architecture Use:** Find dependencies, circular references, layer violations, get CONTENT
 **Examples:** "What imports what?", "Find circular dependencies"
+**PROACTIVE USE:** Use this to query the graph directly for architectural patterns and relationships.
 
 ### 3. analyze_class
 **Architecture Use:** Understand class responsibilities, interfaces implemented
+**FALLBACK:** If insufficient, use `execute_cypher_query` to get the class's CONTENT node directly.
 
 ### 4. analyze_function
 **Architecture Use:** Entry point analysis, orchestration patterns
+**FALLBACK:** If insufficient, use `execute_cypher_query` to get the function's CONTENT node directly.
 
 ### 5. find_dependencies
 **Architecture Use:** Dependency trees, impact analysis, coupling measurement
+**FALLBACK:** If insufficient, use `execute_cypher_query` with relationship traversal patterns.
 
 ### 6. analyze_code_quality
 **Architecture Use:** Find god classes, complexity hotspots, cohesion issues
+**FALLBACK:** If insufficient, use `semantic_code_search` to find and analyze the code directly.
 
 ---
 

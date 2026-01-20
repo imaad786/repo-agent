@@ -18,6 +18,28 @@ from ..utils.settings import settings
 
 logger = logging.getLogger(__name__)
 
+# System instruction for follow-up questions on analysis sessions
+# This overrides the JSON format instruction from the analysis phase
+ANALYSIS_FOLLOWUP_INSTRUCTION = """
+######## CRITICAL FORMAT OVERRIDE ########
+
+The automated analysis phase has ENDED. This is now an interactive conversation with a human user.
+
+YOU MUST [NOT BE SAID IN RESPONSE]:
+- Respond in plain text or markdown format ONLY
+- Answer the user's question conversationally and helpfully
+- Ignore any previous instructions about JSON output format
+
+YOU MUST NOT [NOT BE SAID IN RESPONSE]:
+- Output JSON or any structured data format
+- Reference "requested format" or previous format instructions
+- Wrap your response in code blocks unless showing code examples
+
+This instruction takes precedence over all previous format instructions.
+
+##########################################
+"""
+
 
 class CodeIntelligenceAgent:
 
@@ -93,11 +115,13 @@ class CodeIntelligenceAgent:
                 name=self._name_,
                 model=self._model_[self._default_llm_model_id_],
                 tools=self._tools_ + self._memory_tools_,
-                system_prompt=self._system_prompt__,
                 checkpointer=self._checkpointer_,
                 store=self._store_,
                 context_schema=ContextSchema,
-                middleware=[self.get_call_model_middleware(), summarization_middleware],
+                middleware=[
+                    self.get_call_model_middleware(),  # Handles model selection, memory injection, and follow-up instructions
+                    summarization_middleware
+                ],
             )
 
             logger.info("Agent startup completed successfully")
@@ -160,6 +184,22 @@ class CodeIntelligenceAgent:
                 logger.info("Injected memories for this agent invocation")
             else:
                 logger.info("Skipping memory injection - already injected for this invocation")
+
+            # Inject follow-up instruction for analysis sessions
+            # This adds a SystemMessage to override JSON format instruction
+            is_analysis_followup = getattr(request.runtime.context, 'is_analysis_followup', False)
+            if is_analysis_followup:
+                followup_instruction = SystemMessage(content=ANALYSIS_FOLLOWUP_INSTRUCTION)
+                # Insert the instruction right before the last HumanMessage for maximum effect
+                for i in range(len(request.messages) - 1, -1, -1):
+                    if isinstance(request.messages[i], HumanMessage):
+                        request.messages.insert(i, followup_instruction)
+                        logger.info("Injected analysis follow-up SystemMessage before user message")
+                        break
+                else:
+                    # Fallback: append at end if no HumanMessage found
+                    request.messages.append(followup_instruction)
+                    logger.info("Injected analysis follow-up SystemMessage at end of messages")
 
             self.sanitize_messages_names(request.messages)
             response_generated = await handler(request.override(model=model))
@@ -230,6 +270,7 @@ class CodeIntelligenceAgent:
             repo_namespace: Optional[str] = None,
             message: str = "",
             recursion_limit: Optional[int] = None,
+            is_analysis_followup: bool = False,
     ) -> Dict[str, Any]:
         input_message = {"role": "user", "content": message.strip()}
         config = {
@@ -246,7 +287,8 @@ class CodeIntelligenceAgent:
                 task_id=task_id,
                 repo_namespace=repo_namespace,
                 model_id=model_id,
-                user_id=user_id
+                user_id=user_id,
+                is_analysis_followup=is_analysis_followup
             ),
             stream_mode="updates",
         )
@@ -263,6 +305,7 @@ class CodeIntelligenceAgent:
             repo_namespace: Optional[str] = None,
             message: str = "",
             recursion_limit: Optional[int] = None,
+            is_analysis_followup: bool = False,
     ):
         """
         Stream agent responses with agent progress updates.
@@ -287,7 +330,8 @@ class CodeIntelligenceAgent:
                 task_id=task_id,
                 repo_namespace=repo_namespace,
                 model_id=model_id,
-                user_id=user_id
+                user_id=user_id,
+                is_analysis_followup=is_analysis_followup
             ),
             stream_mode="messages",
         ):
