@@ -1,14 +1,44 @@
+import asyncio
 import logging
 from datetime import datetime, UTC
 from sqlmodel import select, and_
 from typing import List, Optional
 from uuid import UUID
 
+from langchain.chat_models import init_chat_model
+
 from ..db.context import DbContext
 from ..entities import AgentChatSession
 from ..agent.agent_types import AgentType
+from ..utils.settings import settings
 
 logger = logging.getLogger(__name__)
+
+# Prefix used for auto-generated default titles (to identify sessions needing title generation)
+DEFAULT_TITLE_PREFIX = "Chat -"
+
+# Prompt for generating session titles
+TITLE_GENERATION_PROMPT = """Generate a very short, concise title (3-6 words max) for a chat conversation that starts with this message.
+The title should capture the main topic or intent. Do not use quotes or punctuation at the end.
+
+User's first message: {message}
+
+Title:"""
+
+# Cached model instance for title generation (initialized lazily)
+_title_generation_model = None
+
+
+def _get_title_generation_model():
+    """Get or initialize the cached model for title generation."""
+    global _title_generation_model
+    if _title_generation_model is None:
+        _title_generation_model = init_chat_model(
+            settings.default_agent_model,
+            temperature=0.3  # Slightly creative but consistent
+        )
+        logger.info(f"Initialized title generation model: {settings.default_agent_model}")
+    return _title_generation_model
 
 
 class AgentSessionService:
@@ -160,6 +190,81 @@ class AgentSessionService:
 
             logger.info(f"Deleted chat session {session_id}")
             return True
+
+    def needs_title_generation(self, title: Optional[str]) -> bool:
+        """
+        Check if a session title needs auto-generation.
+
+        A title needs generation if it's None, empty, or starts with the default prefix.
+
+        Args:
+            title: Current session title
+
+        Returns:
+            True if title should be auto-generated
+        """
+        if not title:
+            return True
+        return title.startswith(DEFAULT_TITLE_PREFIX)
+
+    async def generate_and_update_title(
+            self,
+            session_id: UUID,
+            first_message: str
+    ) -> Optional[str]:
+        """
+        Generate a title from the first message using LLM and update the session.
+
+        This method runs the LLM call and updates the session title.
+        Should be called in the background to not block the chat response.
+
+        Args:
+            session_id: Session UUID
+            first_message: The user's first message in the conversation
+
+        Returns:
+            Generated title or None if generation failed
+        """
+        try:
+            # Use the cached model for title generation
+            model = _get_title_generation_model()
+
+            prompt = TITLE_GENERATION_PROMPT.format(message=first_message[:500])  # Limit message length
+            response = await model.ainvoke(prompt)
+
+            # Extract and clean the title
+            generated_title = response.content.strip()
+            # Remove quotes if present
+            generated_title = generated_title.strip('"\'')
+            # Limit length
+            if len(generated_title) > 100:
+                generated_title = generated_title[:97] + "..."
+
+            if generated_title:
+                # Update the session with the generated title
+                await self.update_session(session_id, title=generated_title)
+                logger.info(f"Generated title for session {session_id}: {generated_title}")
+                return generated_title
+
+        except Exception as e:
+            logger.warning(f"Failed to generate title for session {session_id}: {e}")
+
+        return None
+
+    def generate_title_background(self, session_id: UUID, first_message: str) -> None:
+        """
+        Trigger title generation in the background.
+
+        Creates an asyncio task that runs the title generation without blocking.
+
+        Args:
+            session_id: Session UUID
+            first_message: The user's first message
+        """
+        asyncio.create_task(
+            self.generate_and_update_title(session_id, first_message),
+            name=f"title_gen_{session_id}"
+        )
 
 
 agent_session_service = AgentSessionService()
