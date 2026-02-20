@@ -49,7 +49,7 @@ class AgentSessionService:
             task_id: UUID,
             repo_namespace: Optional[str] = None,
             title: Optional[str] = None,
-            agent_type: str = AgentType.GENERAL.value,
+            agent_type: str = AgentType.ORCHESTRATOR.value,
     ) -> AgentChatSession:
         async with DbContext.get_session_async() as session:
             if not title:
@@ -69,6 +69,7 @@ class AgentSessionService:
                 title=title,
                 agent_type=agent_type,
                 status="ACTIVE",
+                session_metadata={"domains_used": []} if agent_type == AgentType.ORCHESTRATOR.value else None,
             )
 
             session.add(chat_session)
@@ -190,6 +191,49 @@ class AgentSessionService:
 
             logger.info(f"Deleted chat session {session_id}")
             return True
+
+    async def update_domains_used(
+            self, session_id: UUID, domain: str
+    ) -> None:
+        """
+        Add a domain to the session's domains_used metadata.
+        Called after each message is routed in an orchestrator session.
+
+        Note: This method is called via asyncio.create_task() (fire-and-forget),
+        so it wraps all logic in try/except to ensure errors are logged
+        but never propagate to crash the event loop.
+        """
+        try:
+            async with DbContext.get_session_async() as session:
+                query = select(AgentChatSession).where(
+                    and_(
+                        AgentChatSession.id == session_id,
+                        AgentChatSession.is_deleted == False
+                    )
+                )
+                result = await session.execute(query)
+                chat_session = result.scalar_one_or_none()
+
+                if not chat_session:
+                    return
+
+                # Initialize metadata if needed
+                if chat_session.session_metadata is None:
+                    chat_session.session_metadata = {"domains_used": []}
+
+                domains_used = list(chat_session.session_metadata.get("domains_used", []))
+                if domain not in domains_used:
+                    domains_used.append(domain)
+                    chat_session.session_metadata = {
+                        **chat_session.session_metadata,
+                        "domains_used": domains_used
+                    }
+                    chat_session.modified_on = datetime.now(UTC)
+                    session.add(chat_session)
+                    await session.commit()
+                    logger.debug(f"Updated domains_used for session {session_id}: {domains_used}")
+        except Exception:
+            logger.exception(f"Failed to update domains_used for session {session_id}")
 
     def needs_title_generation(self, title: Optional[str]) -> bool:
         """

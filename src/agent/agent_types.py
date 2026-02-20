@@ -19,6 +19,7 @@ class AgentType(str, Enum):
     ARCHITECTURE = "architecture"
     TESTING = "testing"
     CODE_QUALITY = "code_quality"
+    ORCHESTRATOR = "orchestrator"
 
     @classmethod
     def values(cls) -> list[str]:

@@ -6,8 +6,19 @@ A lightweight FastAPI service that runs a Code Intelligence Agent for chat-style
 
 - FastAPI application with ORJSON responses
 - Agent built on LangChain / LangGraph with memory and summarization middleware
+- **Orchestrator agent** with embedding-based domain routing for unified multi-domain chat
 - PostgreSQL-backed storage for sessions, messages, and agent checkpoint/store
 - MCP (Multi-Server Control Plane) client integration for prompts and tools
+
+## Version
+
+Current version: **0.4.0**
+
+### Recent Changes
+- **v0.4.0** - Orchestrator agent: unified multi-domain chat with embedding-based routing, dynamic prompt injection, and auto-routed domain memory
+- **v0.3.2** - Minor optimization in agent behaviour
+- **v0.3.1** - Fix status update logic for analysis runs
+- **v0.3.0** - Background analysis worker, multiple specialized agents with agent type support
 
 ## Repository Structure
 
@@ -17,6 +28,10 @@ A lightweight FastAPI service that runs a Code Intelligence Agent for chat-style
   - `app.py` - FastAPI application factory and lifespan handlers
   - `agent/` - Agent initialization and implementation
     - `code_intelligence_agent.py` - Agent class using LangChain, LangGraph, memories, summarization
+    - `agent_registry.py` - Registry managing per-agent instances + orchestrator agent + embedding router
+    - `router.py` - Embedding-based domain router (cosine similarity classification)
+    - `memory_tools.py` - Auto-routed memory tools for orchestrator (domain-aware namespaces)
+    - `prompt_loader.py` - Loads system prompts and domain-specific prompts
     - `configure_agent.py` - Creates the agent using MCP prompts/tools and embedding model
     - `mcp/` - MCP client integration (`mcp_client.py`)
   - `db/` - Database context and async engine (`context.py`)
@@ -24,6 +39,8 @@ A lightweight FastAPI service that runs a Code Intelligence Agent for chat-style
   - `routes/` - API routers (hello world + agent routes)
   - `services/` - Business logic for sessions and chat message handling
   - `utils/` - Helpers (`settings.py`, `env_utils.py`, `toml_utils.py`, logging, etc.)
+- `prompts/` - System prompts for per-agent flow (one per domain)
+  - `orchestration_prompts/` - Orchestrator base prompt + domain-only prompts for dynamic injection
 
 ## Configuration
 
@@ -46,6 +63,7 @@ Important environment variables (used in `src/utils/settings.py`):
 - `HUGGING_FACE_EMBEDDING_MODEL_ID` - Embedding model id for sentence transformers
 - `DEFAULT_AGENT_MODEL` - Default model id used by the agent (example: `openai:gpt-5.1`)
 - `AGENT_MODEL_TEMPERATURE` - Default temperature for agent LLM
+- `SUMMARIZATION_TRIGGER_THRESHOLD` - Context usage fraction that triggers summarization (default: `0.80`, range: 0.1–0.95)
 - `APP_PROFILE` - Environment profile name used to pick `.env.<profile>` (default: `local`)
 
 The project reads `.env.<profile>` by default (where `profile` is value of `APP_PROFILE`). The helper `EnvUtils.load_env()` can be called early if you want to ensure `.env` is loaded before settings are evaluated.
@@ -117,20 +135,29 @@ All agent endpoints are mounted under `/api/v1`. The app exposes OpenAPI interac
 
   - `GET /health`
   - Description: Basic service health check
-  - Response: `{ "status": "healthy", "service": "Taazaa-AI-Agent-SVC" }`
+  - Response: `{ "status": "healthy", "service": "Taazaa-AI-Agent-SVC", "version": "0.4.0" }`
 
 - **Create Session**
 
   - `POST /api/v1/agent/sessions?user_id=<uuid>`
   - Query params: `user_id` (UUID) — required
   - Request body (JSON): `CreateSessionRequest`
-    - Example:
+    - Example (orchestrator — default, unified multi-domain chat):
       ```json
       {
         "repo_namespace": "org/repo",
         "title": "My code chat"
       }
       ```
+    - Example (per-agent — old flow, single-domain chat):
+      ```json
+      {
+        "repo_namespace": "org/repo",
+        "title": "Security review",
+        "agent_type": "security"
+      }
+      ```
+    - Valid `agent_type` values: `orchestrator` (default), `general`, `security`, `database`, `api`, `performance`, `architecture`, `testing`, `code_quality`
   - Response: `SessionResponse` (201 Created)
 
 - **List Sessions**
@@ -191,7 +218,17 @@ For programmatic clients use the OpenAPI spec (available at `/openapi.json`) to 
 
 - The agent fetches a system prompt and available tools from an MCP server at startup (configured via `MCP_SERVER_URL` and `MCP_PROMPT_NAME`).
 - The agent uses an embeddings model (configurable) and a LangGraph Postgres store for memories and checkpointing. Use `DATABASE_URL_FOR_AGENT` to provide a separate DB if desired.
-- Summarization middleware automatically summarizes conversation history to keep memory usage bounded.
+- Summarization middleware automatically summarizes conversation history to keep memory usage bounded (threshold configurable via `SUMMARIZATION_TRIGGER_THRESHOLD`).
+
+### Orchestrator Agent
+
+The default session type is **orchestrator** — a single agent that dynamically routes across all domains (security, database, API, performance, architecture, testing, code quality, general) within one conversation.
+
+- **Embedding-based router** classifies each user message into a domain using cosine similarity against precomputed domain description vectors (~50ms overhead per message).
+- **Dynamic prompt injection** loads the matching domain-specific prompt and injects it per-message, so the agent's expertise adapts on every turn without losing conversation history.
+- **Auto-routed memory** stores and retrieves memories in per-domain namespaces based on the router's classification — no cross-domain noise.
+- **Domain tracking** records which domains have been covered in `session_metadata.domains_used` and tags each message with `routed_domain` in its metadata.
+- **Both flows coexist**: sessions created with `agent_type="orchestrator"` (default) use the router; sessions created with a specific type like `"security"` use the old dedicated per-agent flow with a baked-in prompt.
 
 ## Logging & Middleware
 

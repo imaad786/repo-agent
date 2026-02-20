@@ -17,8 +17,9 @@ class CreateSessionRequest(BaseModel):
     task_id: UUID = Field(..., description="Task UUID identifying the indexing task for data isolation")
     repo_namespace: Optional[str] = Field(None, max_length=500, description="Repository namespace (e.g., 'org/repo') - optional for additional filtering/metadata")
     agent_type: str = Field(
-        default=AgentType.GENERAL.value,
-        description=f"Type of agent for this session. Valid types: {AgentType.values()}"
+        default=AgentType.ORCHESTRATOR.value,
+        description="Agent type. Defaults to 'orchestrator' for unified multi-domain chat. "
+                    "Pass 'security', 'database', etc. for the old per-agent flow."
     )
 
     @field_validator('repo_namespace')
@@ -85,6 +86,7 @@ class SessionResponse(BaseModel):
     repo_namespace: Optional[str]
     agent_type: str
     status: str
+    session_metadata: Optional[Dict[str, Any]] = None
     created_on: datetime
     modified_on: datetime
 
@@ -101,6 +103,7 @@ class MessageResponse(BaseModel):
     meta_data: Optional[Dict[str, Any]] = None
     message_order: int
     is_analysis_query: bool = False
+    routed_domain: Optional[str] = None
     created_on: Optional[str] = None
 
 

@@ -100,7 +100,7 @@ class AgentChatService:
         model_id: Optional[str],
         task_id: str,
         repo_namespace: Optional[str] = None,
-        agent_type: str = AgentType.GENERAL.value,
+        agent_type: str = AgentType.ORCHESTRATOR.value,
         is_analysis_query: bool = False
     ) -> Dict[str, Any]:
         async with DbContext.get_session_async() as session:
@@ -115,19 +115,45 @@ class AgentChatService:
                     is_analysis_followup = True
                     logger.info(f"Follow-up detected on analysis session {session_id}")
 
-            # Get the appropriate agent from registry based on agent_type
+            # --- BRANCHING LOGIC ---
             registry = get_registry()
-            agent = await registry.get_agent_by_name(agent_type)
+            routed_domain = None
+            routing_score = None
 
-            response = await agent.ask(
-                user_id=str(user_id),
-                session_id=str(session_id),
-                message=message,
-                model_id=model_id,
-                task_id=task_id,
-                repo_namespace=repo_namespace,
-                is_analysis_followup=is_analysis_followup
-            )
+            if agent_type == AgentType.ORCHESTRATOR.value:
+                # Orchestrator flow: classify with router, use orchestrator agent
+                router = registry.get_router()
+                try:
+                    routed_domain, routing_score = await router.classify(message)
+                except Exception:
+                    logger.exception("Router classification failed, falling back to 'general'")
+                    routed_domain, routing_score = AgentType.GENERAL.value, 0.0
+
+                logger.info(f"Router classified message as '{routed_domain}' (score: {routing_score:.3f}) for session {session_id}")
+
+                agent = registry.get_orchestrator_agent()
+                response = await agent.ask(
+                    user_id=str(user_id),
+                    session_id=str(session_id),
+                    message=message,
+                    model_id=model_id,
+                    task_id=task_id,
+                    repo_namespace=repo_namespace,
+                    is_analysis_followup=is_analysis_followup,
+                    routed_domain=routed_domain,
+                )
+            else:
+                # Per-agent flow: use dedicated agent for the given type
+                agent = await registry.get_agent_by_name(agent_type)
+                response = await agent.ask(
+                    user_id=str(user_id),
+                    session_id=str(session_id),
+                    message=message,
+                    model_id=model_id,
+                    task_id=task_id,
+                    repo_namespace=repo_namespace,
+                    is_analysis_followup=is_analysis_followup,
+                )
 
             user_message = AgentChatMessage(
                 chat_session_id=session_id,
@@ -143,6 +169,15 @@ class AgentChatService:
             # Extract text content from response (handles mixed list/string formats)
             extracted_content = self._extract_text_content(response["content"])
 
+            # Build meta_data — include routing info only for orchestrator sessions
+            meta_data = {
+                "usage_metadata": response.get("usage_metadata", {}),
+                "raw_messages": response.get("raw_messages", [])
+            }
+            if routed_domain is not None:
+                meta_data["routed_domain"] = routed_domain
+                meta_data["routing_score"] = round(routing_score, 3)
+
             assistant_message = AgentChatMessage(
                 chat_session_id=session_id,
                 role="ASSISTANT",
@@ -153,10 +188,7 @@ class AgentChatService:
                 artifacts={
                     "artifacts": response.get("artifacts", [])
                 },
-                meta_data={
-                    "usage_metadata": response.get("usage_metadata", {}),
-                    "raw_messages": response.get("raw_messages", [])
-                },
+                meta_data=meta_data,
                 message_order=last_order + 2,
                 is_analysis_query=is_analysis_query
             )
@@ -176,6 +208,14 @@ class AgentChatService:
                 if chat_session and agent_session_service.needs_title_generation(chat_session.title):
                     agent_session_service.generate_title_background(session_id, message)
 
+            # Update domains_used in session metadata (non-blocking, orchestrator only)
+            if routed_domain is not None:
+                import asyncio
+                asyncio.create_task(
+                    agent_session_service.update_domains_used(session_id, routed_domain),
+                    name=f"domain_update_{session_id}"
+                )
+
             return {
                 "user_message": self._serialize_message(user_message),
                 "assistant_message": self._serialize_message(assistant_message),
@@ -190,7 +230,7 @@ class AgentChatService:
         model_id: Optional[str],
         task_id: str,
         repo_namespace: Optional[str] = None,
-        agent_type: str = AgentType.GENERAL.value,
+        agent_type: str = AgentType.ORCHESTRATOR.value,
         is_analysis_query: bool = False
     ):
         """
@@ -199,10 +239,6 @@ class AgentChatService:
         Yields:
             Stream chunks containing tokens, agent progress, and metadata
         """
-        # Get the appropriate agent from registry based on agent_type
-        registry = get_registry()
-        agent = await registry.get_agent_by_name(agent_type)
-
         # Accumulate the full response content
         full_content = ""
 
@@ -220,8 +256,29 @@ class AgentChatService:
                     is_analysis_followup = True
                     logger.info(f"Follow-up detected on analysis session {session_id}")
 
+        # --- Resolve agent and routing BEFORE the stream loop ---
+        registry = get_registry()
+        routed_domain = None
+        routing_score = None
+
+        if agent_type == AgentType.ORCHESTRATOR.value:
+            # Orchestrator flow: classify with router, use orchestrator agent
+            router = registry.get_router()
+            try:
+                routed_domain, routing_score = await router.classify(message)
+            except Exception:
+                logger.exception("Router classification failed, falling back to 'general'")
+                routed_domain, routing_score = AgentType.GENERAL.value, 0.0
+
+            logger.info(f"Router classified message as '{routed_domain}' (score: {routing_score:.3f}) for session {session_id}")
+            agent = registry.get_orchestrator_agent()
+        else:
+            # Per-agent flow: use dedicated agent for the given type
+            agent = await registry.get_agent_by_name(agent_type)
+
         try:
             # Stream responses from agent
+            # routed_domain=None is safe for old agents (Phase 2 added it with default=None)
             async for chunk in agent.astream(
                 user_id=str(user_id),
                 session_id=str(session_id),
@@ -229,7 +286,8 @@ class AgentChatService:
                 model_id=model_id,
                 task_id=task_id,
                 repo_namespace=repo_namespace,
-                is_analysis_followup=is_analysis_followup
+                is_analysis_followup=is_analysis_followup,
+                routed_domain=routed_domain,
             ):
                 # Agent progress updates - serialize messages in the chunk
                 serialized_chunk = {}
@@ -349,6 +407,15 @@ class AgentChatService:
                     is_analysis_query=is_analysis_query
                 )
 
+                # Build meta_data — include routing info only for orchestrator sessions
+                meta_data = {
+                    "usage_metadata": {},
+                    "raw_messages": []
+                }
+                if routed_domain is not None:
+                    meta_data["routed_domain"] = routed_domain
+                    meta_data["routing_score"] = round(routing_score, 3)
+
                 assistant_message = AgentChatMessage(
                     chat_session_id=session_id,
                     role="ASSISTANT",
@@ -359,14 +426,11 @@ class AgentChatService:
                     artifacts={
                         "artifacts": []
                     },
-                    meta_data={
-                        "usage_metadata": {},
-                        "raw_messages": []
-                    },
+                    meta_data=meta_data,
                     message_order=last_order + 2,
                     is_analysis_query=is_analysis_query
                 )
-                
+
                 session.add(user_message)
                 session.add(assistant_message)
                 await session.commit()
@@ -382,15 +446,27 @@ class AgentChatService:
                     if chat_session and agent_session_service.needs_title_generation(chat_session.title):
                         agent_session_service.generate_title_background(session_id, message)
 
+                # Update domains_used in session metadata (non-blocking, orchestrator only)
+                if routed_domain is not None:
+                    import asyncio
+                    asyncio.create_task(
+                        agent_session_service.update_domains_used(session_id, routed_domain),
+                        name=f"domain_update_{session_id}"
+                    )
+
                 # Yield completion metadata with saved message IDs
+                metadata_payload = {
+                    "status": "completed",
+                    "session_id": str(session_id),
+                    "user_message": self._serialize_message(user_message),
+                    "assistant_message": self._serialize_message(assistant_message),
+                }
+                if routed_domain is not None:
+                    metadata_payload["routed_domain"] = routed_domain
+
                 yield {
                     "type": "metadata",
-                    "data": {
-                        "status": "completed",
-                        "session_id": str(session_id),
-                        "user_message": self._serialize_message(user_message),
-                        "assistant_message": self._serialize_message(assistant_message),
-                    }
+                    "data": metadata_payload
                 }
 
         except Exception as e:
@@ -495,6 +571,7 @@ class AgentChatService:
             "meta_data": message.meta_data,
             "message_order": message.message_order,
             "is_analysis_query": message.is_analysis_query,
+            "routed_domain": (message.meta_data or {}).get("routed_domain"),
             "created_on": message.created_on.isoformat() if message.created_on else None
         }
 
