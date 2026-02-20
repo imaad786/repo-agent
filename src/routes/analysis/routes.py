@@ -44,7 +44,8 @@ async def trigger_analysis(request: TriggerAnalysisRequest):
     logger.info(f"Received analysis trigger from indexer service for task {request.task_id}")
     
     # Use all agent types for comprehensive analysis
-    categories = AgentType.values()
+    # Exclude ORCHESTRATOR — it's a unified router, not an analysis domain
+    categories = [v for v in AgentType.values() if v != AgentType.ORCHESTRATOR.value]
 
     run = await analysis_service.create_run(
         task_id=request.task_id,

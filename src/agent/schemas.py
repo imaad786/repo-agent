@@ -10,3 +10,4 @@ class ContextSchema(BaseModel):
     model_id: Optional[str] = None
     memories_injected: bool = False
     is_analysis_followup: bool = False  # True when this is a follow-up question on an analysis session
+    routed_domain: Optional[str] = None  # Orchestrator: domain classified by the router (e.g., "security", "database")

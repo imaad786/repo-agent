@@ -29,6 +29,13 @@ class Settings(BaseSettings):
     default_agent_model: str = Field(alias="DEFAULT_AGENT_MODEL", default="openai:gpt-5.1")
     agent_model_temperature: float = Field(alias="AGENT_MODEL_TEMPERATURE", default=0.2, ge=0.0, le=1.0)
 
+    summarization_trigger_threshold: float = Field(
+        alias="SUMMARIZATION_TRIGGER_THRESHOLD",
+        default=0.80,
+        ge=0.1,
+        le=0.95
+    )
+
     @field_validator('database_url')
     @classmethod
     def validate_database_url(cls, v: str) -> str:

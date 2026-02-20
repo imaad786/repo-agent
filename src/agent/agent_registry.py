@@ -3,6 +3,12 @@ Agent Registry for managing multiple specialized agent instances.
 
 All agents share the same infrastructure (tools, memory, checkpointer, etc.)
 but have different system prompts for specialized behavior.
+
+The registry manages both:
+- Per-agent instances (old flow): one CodeIntelligenceAgent per AgentType with static prompts
+- Orchestrator instance (new flow): single agent with dynamic prompt injection + embedding router
+
+Decision D8: Both flows coexist. Orchestrator is the new default, old per-agent flow stays functional.
 """
 import logging
 from typing import Dict, List, Optional, Any
@@ -12,6 +18,7 @@ from langchain_core.embeddings import Embeddings
 from .agent_types import AgentType
 from .prompt_loader import load_prompt
 from .code_intelligence_agent import CodeIntelligenceAgent
+from .router import EmbeddingRouter
 from .mcp.mcp_client import mcp_client
 from .embeddings import get_embedding_model
 from ..utils.settings import settings
@@ -55,7 +62,9 @@ class AgentRegistry:
         self._embeddings = embeddings
         self._default_model_id = default_model_id
         self._temperature = temperature
-        self._agents: Dict[AgentType, CodeIntelligenceAgent] = {}
+        self._agents: Dict[AgentType, CodeIntelligenceAgent] = {}  # Per-type agents (old flow)
+        self._orchestrator_agent: Optional[CodeIntelligenceAgent] = None  # Orchestrator (new flow)
+        self._router: Optional[EmbeddingRouter] = None  # Embedding router (new flow)
         self._initialized = False
 
     async def get_agent(self, agent_type: AgentType) -> CodeIntelligenceAgent:
@@ -136,27 +145,80 @@ class AgentRegistry:
 
     async def startup(self, preload_types: Optional[List[AgentType]] = None) -> None:
         """
-        Initialize the registry and preload agent types.
+        Initialize the registry: preload per-agent instances, then create
+        the orchestrator agent and embedding router.
 
         Args:
-            preload_types: List of agent types to preload. Defaults to ALL agent types.
+            preload_types: List of agent types to preload for the old per-agent flow.
+                          Defaults to all types except ORCHESTRATOR (which gets special init).
         """
         if preload_types is None:
-            # Preload all agent types by default
-            preload_types = list(AgentType)
+            # Preload all agent types EXCEPT orchestrator (it gets special initialization below)
+            preload_types = [t for t in AgentType if t != AgentType.ORCHESTRATOR]
 
-        logger.info(f"Starting agent registry with preload types: {[t.value for t in preload_types]}")
+        # Filter out ORCHESTRATOR even if explicitly passed — it's handled separately
+        per_agent_types = [t for t in preload_types if t != AgentType.ORCHESTRATOR]
 
-        for agent_type in preload_types:
+        logger.info(f"Starting agent registry with preload types: {[t.value for t in per_agent_types]}")
+
+        # --- Per-agent preloading (existing flow) ---
+        for agent_type in per_agent_types:
             await self.get_agent(agent_type)
 
+        # --- Initialize the embedding router ---
+        self._router = EmbeddingRouter(embeddings=self._embeddings)
+        await self._router.initialize()
+
+        # --- Create orchestrator agent with auto-routed memory tools ---
+        from .memory_tools import (
+            create_auto_routed_manage_memory_tool,
+            create_auto_routed_search_memory_tool
+        )
+
+        orchestrator_prompt = load_prompt(AgentType.ORCHESTRATOR)
+
+        self._orchestrator_agent = CodeIntelligenceAgent(
+            name="orchestrator_agent",
+            tools=self._tools,
+            embeddings=self._embeddings,
+            system_prompt=orchestrator_prompt,
+            default_llm_model_id=self._default_model_id,
+            temperature=self._temperature,
+            base_memory_namespace="orchestrator_agent_memories",
+            # Defensive fallback namespace — not expected to be used in practice
+            # because the router always classifies a domain (routed_domain is always set).
+            # Memory routing is handled by the auto-routed tools and
+            # domain-based middleware. Kept as a safety net for edge cases.
+            memory_tools=[
+                create_auto_routed_manage_memory_tool(),
+                create_auto_routed_search_memory_tool()
+            ],
+        )
+        await self._orchestrator_agent.startup()
+
         self._initialized = True
-        logger.info(f"Agent registry started. Active agents: {self.list_active_agents()}")
+        logger.info(
+            f"Agent registry started: {len(per_agent_types)} per-agent instances + "
+            f"orchestrator agent + embedding router"
+        )
+
+    def get_orchestrator_agent(self) -> CodeIntelligenceAgent:
+        """Get the orchestrator agent instance."""
+        if self._orchestrator_agent is None:
+            raise RuntimeError("Agent registry not initialized or orchestrator not created.")
+        return self._orchestrator_agent
+
+    def get_router(self) -> EmbeddingRouter:
+        """Get the embedding router instance."""
+        if self._router is None:
+            raise RuntimeError("Agent registry not initialized or router not created.")
+        return self._router
 
     async def shutdown(self) -> None:
-        """Shutdown all active agents and cleanup resources."""
+        """Shutdown all active agents (per-type + orchestrator) and cleanup resources."""
         logger.info(f"Shutting down agent registry. Active agents: {self.list_active_agents()}")
 
+        # Shutdown per-agent instances
         for agent_type, agent in self._agents.items():
             try:
                 await agent.shutdown()
@@ -164,6 +226,16 @@ class AgentRegistry:
             except Exception as e:
                 logger.error(f"Error shutting down agent {agent_type.value}: {e}")
 
+        # Shutdown orchestrator agent
+        if self._orchestrator_agent:
+            try:
+                await self._orchestrator_agent.shutdown()
+                logger.info("Orchestrator agent shut down successfully")
+            except Exception as e:
+                logger.error(f"Error shutting down orchestrator agent: {e}")
+            self._orchestrator_agent = None
+
+        self._router = None
         self._agents.clear()
         self._initialized = False
         logger.info("Agent registry shutdown complete")

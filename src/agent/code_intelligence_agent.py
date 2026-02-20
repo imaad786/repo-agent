@@ -53,6 +53,7 @@ class CodeIntelligenceAgent:
             temperature: float = 0.1,
             base_memory_namespace: str = "code_intelligence_agent_memories",
             recursion_limit: int = 50,
+            memory_tools: Optional[List[Any]] = None,
     ):
         self._name_ = name
         self._tools_ = tools
@@ -66,10 +67,16 @@ class CodeIntelligenceAgent:
         self._store_ = None
 
         self._namespace_ = (base_memory_namespace, "{user_id}")
-        self._memory_tools_ = [
-            create_manage_memory_tool(namespace=self._base_memory_namespace_),
-            create_search_memory_tool(namespace=self._base_memory_namespace_)
-        ]
+
+        if memory_tools is not None:
+            # Use provided memory tools (e.g., auto-routed for orchestrator)
+            self._memory_tools_ = memory_tools
+        else:
+            # Default: static LangMem tools (existing behavior for old per-agent flow)
+            self._memory_tools_ = [
+                create_manage_memory_tool(namespace=self._base_memory_namespace_),
+                create_search_memory_tool(namespace=self._base_memory_namespace_)
+            ]
 
         self._temperature_ = temperature
         self._default_llm_model_id_ = default_llm_model_id
@@ -105,7 +112,7 @@ class CodeIntelligenceAgent:
 
             summarization_middleware = SummarizationMiddleware(
                 model=self._model_[self._default_llm_model_id_],
-                trigger=[("fraction", 0.65)],
+                trigger=[("fraction", settings.summarization_trigger_threshold)],
                 keep=("fraction", 0.3),
                 trim_tokens_to_summarize=5000,
                 summary_prefix="Previous conversation summary:",
@@ -136,7 +143,9 @@ class CodeIntelligenceAgent:
             model_id = request.runtime.context.model_id
             user_id = request.runtime.context.user_id
             memories_injected = request.runtime.context.memories_injected
+            routed_domain = request.runtime.context.routed_domain
 
+            # --- Model selection (unchanged) ---
             if model_id:
                 if model_id not in self._model_:
                     self._model_[model_id] = init_chat_model(model_id, temperature=self._temperature_)
@@ -149,12 +158,19 @@ class CodeIntelligenceAgent:
                 model = self._model_[self._default_llm_model_id_]
                 logger.info(f"No model_id specified, using default model '{self._default_llm_model_id_}'")
 
-            # Only inject memories once per agent invocation
+            # --- Memory injection (domain-based namespace for orchestrator) ---
             if not memories_injected:
-                formatted_namespace = (
-                    self._base_memory_namespace_[0],
-                    self._base_memory_namespace_[1].format(user_id=user_id)
-                )
+                # Use routed_domain for namespace if available (orchestrator flow),
+                # else fall back to the pre-built namespace tuple (old per-agent flow).
+                if routed_domain:
+                    memory_namespace = (f"{routed_domain}_agent_memories", user_id)
+                else:
+                    # Fallback for old per-agent flow: use the pre-built namespace tuple
+                    memory_namespace = (
+                        self._namespace_[0],
+                        self._namespace_[1].format(user_id=user_id)
+                    )
+
                 store = get_store()
 
                 # Extract text content from message (handle both string and list formats)
@@ -169,24 +185,44 @@ class CodeIntelligenceAgent:
                     query_text = last_message_content
 
                 items = await store.asearch(
-                    formatted_namespace,
+                    memory_namespace,
                     query=query_text
                 )
-                memories = "\n\n".join([
-                    f"**Memory {i + 1}:** {item.value['content']}" for i, item in enumerate(items)
-                ])
-                system_msg = SystemMessage(content=f'### User Memories:\n\n{memories}')
-                request.messages = [system_msg] + request.messages
-                self.sanitize_messages_names(request.messages)
+                if items:
+                    memories = "\n\n".join([
+                        f"**Memory {i + 1}:** {item.value['content']}" for i, item in enumerate(items)
+                    ])
+                    system_msg = SystemMessage(content=f'### User Memories:\n\n{memories}')
+                    request.messages = [system_msg] + request.messages
 
                 # Mark that memories have been injected by updating the context
                 request.runtime.context.memories_injected = True
-                logger.info("Injected memories for this agent invocation")
+                logger.info(f"Injected memories for this agent invocation (namespace: {memory_namespace})")
             else:
                 logger.info("Skipping memory injection - already injected for this invocation")
 
-            # Inject follow-up instruction for analysis sessions
-            # This adds a SystemMessage to override JSON format instruction
+            # --- Domain prompt injection (orchestrator flow only) ---
+            if routed_domain:
+                from .prompt_loader import load_domain_prompt
+                from .agent_types import AgentType
+                try:
+                    domain_prompt = load_domain_prompt(AgentType(routed_domain))
+                    domain_msg = SystemMessage(
+                        content=f"### Active Domain Expertise: {routed_domain.upper()}\n\n{domain_prompt}"
+                    )
+                    # Insert right before the last HumanMessage for maximum effect
+                    # (same technique as analysis followup injection)
+                    for i in range(len(request.messages) - 1, -1, -1):
+                        if isinstance(request.messages[i], HumanMessage):
+                            request.messages.insert(i, domain_msg)
+                            break
+                    else:
+                        request.messages.append(domain_msg)
+                    logger.info(f"Injected domain prompt for '{routed_domain}'")
+                except (ValueError, FileNotFoundError) as e:
+                    logger.warning(f"Failed to load domain prompt for '{routed_domain}': {e}")
+
+            # --- Analysis followup injection (unchanged) ---
             is_analysis_followup = getattr(request.runtime.context, 'is_analysis_followup', False)
             if is_analysis_followup:
                 followup_instruction = SystemMessage(content=ANALYSIS_FOLLOWUP_INSTRUCTION)
@@ -271,6 +307,7 @@ class CodeIntelligenceAgent:
             message: str = "",
             recursion_limit: Optional[int] = None,
             is_analysis_followup: bool = False,
+            routed_domain: Optional[str] = None,
     ) -> Dict[str, Any]:
         input_message = {"role": "user", "content": message.strip()}
         config = {
@@ -278,6 +315,7 @@ class CodeIntelligenceAgent:
             "configurable": {
                 "thread_id": session_id,
                 "user_id": user_id,
+                "routed_domain": routed_domain,
             }
         }
         response_updates = await self._agent_.ainvoke(
@@ -288,7 +326,8 @@ class CodeIntelligenceAgent:
                 repo_namespace=repo_namespace,
                 model_id=model_id,
                 user_id=user_id,
-                is_analysis_followup=is_analysis_followup
+                is_analysis_followup=is_analysis_followup,
+                routed_domain=routed_domain,
             ),
             stream_mode="updates",
         )
@@ -306,6 +345,7 @@ class CodeIntelligenceAgent:
             message: str = "",
             recursion_limit: Optional[int] = None,
             is_analysis_followup: bool = False,
+            routed_domain: Optional[str] = None,
     ):
         """
         Stream agent responses with agent progress updates.
@@ -319,6 +359,7 @@ class CodeIntelligenceAgent:
             "configurable": {
                 "thread_id": session_id,
                 "user_id": user_id,
+                "routed_domain": routed_domain,
             }
         }
 
@@ -331,7 +372,8 @@ class CodeIntelligenceAgent:
                 repo_namespace=repo_namespace,
                 model_id=model_id,
                 user_id=user_id,
-                is_analysis_followup=is_analysis_followup
+                is_analysis_followup=is_analysis_followup,
+                routed_domain=routed_domain,
             ),
             stream_mode="messages",
         ):

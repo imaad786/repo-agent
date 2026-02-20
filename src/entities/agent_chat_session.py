@@ -38,7 +38,7 @@ class AgentChatSession(BaseEntityMixin, table=True):
     repo_namespace: Optional[str] = Field(default=None, index=True, max_length=500)
 
     # Agent type determines which specialized agent handles this session
-    agent_type: str = Field(default=AgentType.GENERAL.value, index=True, max_length=50)
+    agent_type: str = Field(default=AgentType.ORCHESTRATOR.value, index=True, max_length=50)
 
     status: str = Field(default=ChatSessionStatus.ACTIVE.value, max_length=50)
 

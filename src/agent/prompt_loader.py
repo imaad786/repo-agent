@@ -16,11 +16,17 @@ logger = logging.getLogger(__name__)
 # Directory containing prompt files (at repository root)
 PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts"
 
+# Subfolder for orchestrator-specific prompts (orchestrator.md + *_domain.md)
+ORCHESTRATION_PROMPTS_DIR = PROMPTS_DIR / "orchestration_prompts"
+
 
 @lru_cache(maxsize=16)
 def load_prompt(agent_type: AgentType) -> str:
     """
     Load system prompt from markdown file for given agent type.
+
+    For AgentType.ORCHESTRATOR, loads from the orchestration_prompts/ subfolder.
+    For all other types, loads from the root prompts/ directory (existing behavior).
 
     Prompts are cached for performance. Use reload_prompts() to clear cache.
 
@@ -33,7 +39,11 @@ def load_prompt(agent_type: AgentType) -> str:
     Raises:
         FileNotFoundError: If prompt file doesn't exist and no fallback available
     """
-    prompt_file = PROMPTS_DIR / f"{agent_type.value}.md"
+    # Orchestrator prompt lives in the orchestration_prompts/ subfolder
+    if agent_type == AgentType.ORCHESTRATOR:
+        prompt_file = ORCHESTRATION_PROMPTS_DIR / "orchestrator.md"
+    else:
+        prompt_file = PROMPTS_DIR / f"{agent_type.value}.md"
 
     if prompt_file.exists():
         prompt = prompt_file.read_text(encoding="utf-8")
@@ -54,14 +64,53 @@ def load_prompt(agent_type: AgentType) -> str:
     )
 
 
+@lru_cache(maxsize=16)
+def load_domain_prompt(agent_type: AgentType) -> str:
+    """
+    Load domain-specific prompt (trimmed version without shared sections)
+    for injection by the orchestrator middleware.
+
+    These are the *_domain.md files in the orchestration_prompts/ subfolder,
+    not the full standalone prompts.
+
+    Args:
+        agent_type: The domain type to load prompt for
+
+    Returns:
+        Domain-specific prompt string
+
+    Raises:
+        FileNotFoundError: If domain prompt file doesn't exist
+    """
+    prompt_file = ORCHESTRATION_PROMPTS_DIR / f"{agent_type.value}_domain.md"
+
+    if prompt_file.exists():
+        prompt = prompt_file.read_text(encoding="utf-8")
+        logger.debug(f"Loaded domain prompt for {agent_type.value} from {prompt_file}")
+        return prompt
+
+    # Fallback to general domain prompt
+    fallback_file = ORCHESTRATION_PROMPTS_DIR / "general_domain.md"
+    if fallback_file.exists():
+        logger.warning(
+            f"Domain prompt not found for {agent_type.value}, falling back to general_domain.md"
+        )
+        return fallback_file.read_text(encoding="utf-8")
+
+    raise FileNotFoundError(
+        f"No domain prompt file found for {agent_type.value}"
+    )
+
+
 def reload_prompts() -> None:
     """
-    Clear the prompt cache to reload prompts from files.
+    Clear all prompt caches to reload prompts from files.
 
     Useful during development or when prompts are updated dynamically.
     """
     load_prompt.cache_clear()
-    logger.info("Prompt cache cleared")
+    load_domain_prompt.cache_clear()
+    logger.info("All prompt caches cleared")
 
 
 def get_prompt_path(agent_type: AgentType) -> Path:
