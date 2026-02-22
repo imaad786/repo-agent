@@ -3,16 +3,27 @@ Embedding-based domain router for the orchestrator agent.
 
 Classifies user messages into specialized domains (security, database, etc.)
 using cosine similarity between the message embedding and precomputed
-domain description embeddings.
+domain exemplar embeddings, with lexical keyword boosts for precision.
+
+Each domain has multiple short example utterances that represent typical
+user queries. At classify-time, the message is compared to every exemplar
+and the domain whose best-matching exemplar has the highest similarity wins.
+
+When the top two domains are close (within AMBIGUITY_MARGIN), the router
+returns a secondary_domain hint so the orchestrator can consider both.
+Specialized domains are favored over 'general' in close calls.
 
 Decisions:
 - Always picks the single highest-scoring domain (D2)
 - Falls back to 'general' when top score < min_threshold (D3)
+- Returns secondary_domain when top two are within ambiguity margin
 - Uses the existing HuggingFace embedding model (D1)
 """
 
 import asyncio
 import logging
+import re
+from dataclasses import dataclass
 from typing import Optional
 
 import numpy as np
@@ -22,105 +33,190 @@ from .agent_types import AgentType
 
 logger = logging.getLogger(__name__)
 
-# Domain descriptions for embedding-based classification.
-# These are embedded at startup and compared against user messages.
-# Keep descriptions focused on the vocabulary/terms a user would use
-# when asking questions in that domain.
-DOMAIN_DESCRIPTIONS: dict[str, str] = {
-    AgentType.SECURITY.value: (
-        "Security vulnerabilities and attack vectors including OWASP top 10, SQL injection, "
-        "NoSQL injection, OS command injection, LDAP injection, XSS, CSRF, SSRF, "
-        "and insecure deserialization via pickle.load or yaml.load. Authentication and "
-        "authorization weaknesses such as hardcoded credentials, weak passwords, missing "
-        "login protection, session token issues, and broken access control. Cryptographic "
-        "problems like use of MD5, SHA1, DES, ECB mode, weak random number generation "
-        "instead of bcrypt or argon2. Dangerous patterns like shell=True, os.system, "
-        "subprocess with user input, sensitive data in logs, verbose error messages, "
-        "and secrets exposed in API responses or source code."
-    ),
-    AgentType.DATABASE.value: (
-        "Database schema design, query optimization, and data modeling including foreign keys, "
-        "joins, indexes, and constraints. N+1 query problems, lazy loading vs eager loading "
-        "with joinedload, selectinload, or prefetch_related. ORM anti-patterns like detached "
-        "entities, raw SQL with string formatting, missing migrations, and schema drift. "
-        "Connection management issues such as connection pooling, connection leaks, pool "
-        "exhaustion, and missing transaction boundaries with commit and rollback. Query "
-        "performance problems like SELECT *, unbounded queries without LIMIT, full table "
-        "scans, Cartesian products, and missing indexes. Repository pattern, DAO classes, "
-        "alembic migrations, cascade deletes, and race conditions in concurrent writes."
-    ),
-    AgentType.API.value: (
-        "REST API design and endpoint structure including resource naming, HTTP methods, "
-        "status codes, versioning, and idempotency. Request validation with Pydantic models, "
-        "serializers, or schema validators. Response design problems like over-fetching, "
-        "under-fetching, inconsistent error formats, and missing pagination on list endpoints "
-        "with limit, offset, or cursor-based pagination. API security including missing "
-        "authentication decorators, unprotected endpoints, missing rate limiting, overly "
-        "permissive CORS configuration, and input injection via request parameters. "
-        "OpenAPI documentation, route decorators like @get, @post, @put, @patch, @delete, "
-        "middleware chains, content negotiation, GraphQL schema design, and API contracts."
-    ),
-    AgentType.PERFORMANCE.value: (
-        "Performance bottlenecks and algorithmic complexity including O(n²) nested loops, "
-        "O(n³) operations, linear searches with 'in' checks on lists, and sorting inside "
-        "iterations. Memory issues like memory leaks, GC pressure, unbounded caches, large "
-        "object allocation, and string concatenation with += in loops instead of join or "
-        "StringBuilder. I/O performance problems such as synchronous blocking I/O in async "
-        "code, sequential HTTP requests instead of parallel with Promise.all or asyncio.gather, "
-        "missing connection pooling, readFileSync, and loading entire files into memory instead "
-        "of streaming or chunking. Caching strategies with @lru_cache, TTL expiry, and cache "
-        "invalidation. Concurrency issues like thread contention, deadlocks, race conditions, "
-        "and over-threading. Profiling, latency, throughput, CPU usage, and hot path optimization."
-    ),
-    AgentType.ARCHITECTURE.value: (
-        "Software architecture and design patterns including Clean Architecture, Hexagonal "
-        "Architecture, MVC, and layered architecture. Dependency management problems like "
-        "circular dependencies, circular imports, package cycles, wrong dependency direction, "
-        "and tight coupling between modules. Layer violations where controllers access "
-        "repositories directly bypassing service layers. SOLID principle violations especially "
-        "dependency inversion and single responsibility. Structural anti-patterns like God "
-        "classes with too many responsibilities, spaghetti code, feature envy, and shotgun "
-        "surgery. Code organization issues including poor cohesion, missing abstractions, "
-        "concrete dependencies instead of interfaces, hub classes, orphan classes, "
-        "inheritance hierarchy problems, and inconsistent module structure."
-    ),
-    AgentType.TESTING.value: (
-        "Test coverage gaps, untested functions, untested code paths, and missing tests for "
-        "critical or complex code. Unit tests, integration tests, and end-to-end test strategy. "
-        "Test quality issues like tests without assertions, flaky tests with intermittent "
-        "failures, slow tests, brittle tests coupled to implementation, and dead or duplicate "
-        "tests. Test design patterns including AAA pattern (Arrange Act Assert), test isolation, "
-        "fixtures and conftest setup, mocking with mock, patch, stub, fake, and spy. "
-        "Over-mocking that hides real bugs, missing error path testing with raises or throws, "
-        "missing edge case coverage, and TDD workflow. Test frameworks, parameterized tests, "
-        "test organization, and test-to-code ratio per module."
-    ),
-    AgentType.CODE_QUALITY.value: (
-        "Code smells and clean code issues including long methods over 30 lines, large classes "
-        "over 300 lines or 10+ methods, long parameter lists, and duplicate or copy-pasted "
-        "code. Naming and readability problems like unclear variable names, misleading names, "
-        "inconsistent naming conventions, magic numbers and unexplained hardcoded literals, "
-        "and complex boolean expressions that are hard to read. Structural issues such as "
-        "deep nesting over 4 levels that needs guard clauses, complex conditionals, flag "
-        "arguments with boolean parameters, and primitive obsession. Refactoring opportunities "
-        "like extract method, extract class, and feature envy. Documentation gaps including "
-        "missing docstrings, outdated comments, TODO and FIXME accumulation as technical debt, "
-        "missing type hints and annotations, and dead or unreachable code."
-    ),
-    AgentType.GENERAL.value: (
-        "General code questions, navigation, and understanding how code works. Finding where "
-        "something is defined, what calls a function, where a class is used, and tracing "
-        "execution flow through call chains. Dependency mapping to understand what depends on "
-        "a component and what breaks if it changes. Impact analysis for breaking changes and "
-        "downstream effects. Debugging support to locate issues, trace data flow, and find "
-        "entry points. Explaining what a function, class, or module does. Semantic code search "
-        "to discover related code by concept. General programming questions and code walkthroughs."
-    ),
+# Domain exemplars: short representative queries per domain.
+# Each exemplar is embedded at startup. At classify-time, the user message
+# is compared against ALL exemplars and the domain with the highest
+# single-exemplar match wins. Short query-like phrases work best because
+# the user's input is also a short query — matching like-to-like.
+#
+# Includes domain-specific anchor terms (alembic, OWASP, OpenAPI, etc.)
+# to sharpen separation between overlapping domains.
+DOMAIN_EXEMPLARS: dict[str, list[str]] = {
+    AgentType.SECURITY.value: [
+        "find security vulnerabilities in this code",
+        "are there any SQL injection or XSS issues",
+        "check for hardcoded credentials and secrets",
+        "is the authentication and authorization secure",
+        "OWASP top 10 vulnerability scan",
+        "are there any insecure deserialization or CSRF risks",
+        "check for exposed secrets and sensitive data in code",
+        "scan for CWE CVE SSRF RCE security weaknesses",
+        "is user input sanitized to prevent injection attacks",
+    ],
+    AgentType.DATABASE.value: [
+        "show me the database schema and tables",
+        "are there any N+1 query problems",
+        "check for missing database indexes",
+        "how are database migrations managed",
+        "review the database queries for optimization",
+        "are there connection pooling or transaction issues",
+        "check the ORM usage and data modeling",
+        "review alembic prisma typeorm migration files",
+        "check foreign key constraints and ERD relationships",
+    ],
+    AgentType.API.value: [
+        "what REST API endpoints are available",
+        "is there proper input validation on the API",
+        "are API responses paginated correctly",
+        "check the endpoint design and HTTP methods",
+        "is rate limiting implemented on the API",
+        "review CORS configuration and API security",
+        "check the route definitions and middleware",
+        "review OpenAPI swagger API documentation and contracts",
+        "check auth headers and API versioning strategy",
+    ],
+    AgentType.PERFORMANCE.value: [
+        "find performance bottlenecks in this code",
+        "are there any memory leaks",
+        "check for blocking I/O in async code",
+        "find slow code paths and optimize them",
+        "how can we improve speed and latency",
+        "check for caching opportunities",
+        "review algorithmic complexity and efficiency",
+        "profile CPU usage and hot path optimization",
+        "check for O(n²) nested loops and inefficient algorithms",
+    ],
+    AgentType.ARCHITECTURE.value: [
+        "what is the architecture of this project",
+        "how is this codebase structured and organized",
+        "are there any circular dependencies",
+        "what design patterns are used here",
+        "review the module organization and layers",
+        "check for SOLID principle violations",
+        "explain the project structure and component layout",
+        "review service boundaries and dependency graph",
+        "check the separation between layers and modules",
+    ],
+    AgentType.TESTING.value: [
+        "what is the test coverage",
+        "are there any untested functions or code paths",
+        "show me the test files",
+        "are there any flaky or broken tests",
+        "how are mocks and fixtures used in tests",
+        "review the unit test and integration test quality",
+        "check for missing test assertions",
+        "review pytest conftest fixtures and parameterized tests",
+        "check test isolation and arrange act assert pattern",
+    ],
+    AgentType.CODE_QUALITY.value: [
+        "are there any code smells",
+        "find duplicate or copy-pasted code",
+        "check for magic numbers and hardcoded values",
+        "which functions or classes are too long",
+        "review naming conventions and code readability",
+        "check for dead code and unused imports",
+        "are there refactoring opportunities",
+        "check for deep nesting and complex conditionals",
+        "review type hints annotations and docstring coverage",
+    ],
+    AgentType.GENERAL.value: [
+        "what does this function do",
+        "explain this code to me",
+        "where is the main entry point",
+        "what calls this method or function",
+        "how does the request flow work end to end",
+        "help me understand this codebase",
+        "find where something is defined in the code",
+        "walk me through this code step by step",
+        "what is this project about",
+    ],
+}
+
+# Lexical keyword boosts: high-precision trigger words that strongly
+# indicate a specific domain. Applied as a score boost BEFORE the
+# embedding-based ranking to catch obvious signals that embeddings
+# might miss. Each keyword maps to (domain, boost_amount).
+LEXICAL_BOOSTS: dict[str, tuple[str, float]] = {
+    # Security triggers
+    "owasp": (AgentType.SECURITY.value, 0.15),
+    "cve": (AgentType.SECURITY.value, 0.15),
+    "cwe": (AgentType.SECURITY.value, 0.15),
+    "xss": (AgentType.SECURITY.value, 0.15),
+    "csrf": (AgentType.SECURITY.value, 0.15),
+    "ssrf": (AgentType.SECURITY.value, 0.15),
+    "sqli": (AgentType.SECURITY.value, 0.15),
+    "vulnerability": (AgentType.SECURITY.value, 0.10),
+    "injection": (AgentType.SECURITY.value, 0.10),
+    "credential": (AgentType.SECURITY.value, 0.10),
+    "credentials": (AgentType.SECURITY.value, 0.10),
+    "secret": (AgentType.SECURITY.value, 0.10),
+    "secrets": (AgentType.SECURITY.value, 0.10),
+    # Database triggers
+    "schema": (AgentType.DATABASE.value, 0.10),
+    "migration": (AgentType.DATABASE.value, 0.10),
+    "migrations": (AgentType.DATABASE.value, 0.10),
+    "alembic": (AgentType.DATABASE.value, 0.15),
+    "prisma": (AgentType.DATABASE.value, 0.15),
+    "typeorm": (AgentType.DATABASE.value, 0.15),
+    "foreign key": (AgentType.DATABASE.value, 0.10),
+    "n+1": (AgentType.DATABASE.value, 0.15),
+    "index": (AgentType.DATABASE.value, 0.08),
+    "indexes": (AgentType.DATABASE.value, 0.10),
+    # API triggers
+    "endpoint": (AgentType.API.value, 0.10),
+    "endpoints": (AgentType.API.value, 0.10),
+    "openapi": (AgentType.API.value, 0.15),
+    "swagger": (AgentType.API.value, 0.15),
+    "rest api": (AgentType.API.value, 0.10),
+    "rate limit": (AgentType.API.value, 0.10),
+    "rate limiting": (AgentType.API.value, 0.10),
+    "cors": (AgentType.API.value, 0.10),
+    "middleware": (AgentType.API.value, 0.08),
+    # Performance triggers
+    "bottleneck": (AgentType.PERFORMANCE.value, 0.10),
+    "bottlenecks": (AgentType.PERFORMANCE.value, 0.10),
+    "memory leak": (AgentType.PERFORMANCE.value, 0.10),
+    "latency": (AgentType.PERFORMANCE.value, 0.10),
+    "profiling": (AgentType.PERFORMANCE.value, 0.10),
+    "blocking i/o": (AgentType.PERFORMANCE.value, 0.10),
+    # Architecture triggers
+    "architecture": (AgentType.ARCHITECTURE.value, 0.10),
+    "circular dependency": (AgentType.ARCHITECTURE.value, 0.10),
+    "circular dependencies": (AgentType.ARCHITECTURE.value, 0.10),
+    "design pattern": (AgentType.ARCHITECTURE.value, 0.10),
+    "design patterns": (AgentType.ARCHITECTURE.value, 0.10),
+    "solid principles": (AgentType.ARCHITECTURE.value, 0.10),
+    # Testing triggers
+    "test coverage": (AgentType.TESTING.value, 0.10),
+    "unit test": (AgentType.TESTING.value, 0.10),
+    "unit tests": (AgentType.TESTING.value, 0.10),
+    "flaky test": (AgentType.TESTING.value, 0.10),
+    "flaky tests": (AgentType.TESTING.value, 0.10),
+    "pytest": (AgentType.TESTING.value, 0.15),
+    "conftest": (AgentType.TESTING.value, 0.15),
+    # Code quality triggers
+    "code smell": (AgentType.CODE_QUALITY.value, 0.10),
+    "code smells": (AgentType.CODE_QUALITY.value, 0.10),
+    "naming convention": (AgentType.CODE_QUALITY.value, 0.10),
+    "naming conventions": (AgentType.CODE_QUALITY.value, 0.10),
+    "magic number": (AgentType.CODE_QUALITY.value, 0.10),
+    "magic numbers": (AgentType.CODE_QUALITY.value, 0.10),
+    "dead code": (AgentType.CODE_QUALITY.value, 0.10),
+    "duplicate code": (AgentType.CODE_QUALITY.value, 0.10),
+    "refactor": (AgentType.CODE_QUALITY.value, 0.08),
 }
 
 # Default minimum similarity threshold.
 # Below this, fall back to 'general' (Decision D3).
-DEFAULT_MIN_THRESHOLD = 0.3
+# With normalized embeddings and exemplar-based matching,
+# scores typically range 0.3-0.8. A threshold of 0.30 catches
+# truly ambiguous queries while allowing most legitimate matches through.
+DEFAULT_MIN_THRESHOLD = 0.30
+
+# Ambiguity margin: when the gap between the top domain and the runner-up
+# is smaller than this, the classification is considered ambiguous and
+# the runner-up is returned as secondary_domain.
+DEFAULT_AMBIGUITY_MARGIN = 0.07
 
 # Tiebreaker priority order.
 # If two domains have the exact same cosine similarity score,
@@ -140,63 +236,90 @@ DOMAIN_PRIORITY: list[str] = [
 ]
 
 
+@dataclass
+class RouteResult:
+    """Result of domain classification."""
+    domain: str
+    score: float
+    secondary_domain: Optional[str] = None
+
+
 class EmbeddingRouter:
     """
-    Routes user messages to the appropriate domain using embedding similarity.
+    Routes user messages to the appropriate domain using embedding similarity
+    with lexical keyword boosts and ambiguity detection.
 
-    At startup, embeds all domain descriptions and caches the vectors.
-    On each message, embeds the message and computes cosine similarity
-    against all cached domain vectors. Returns the top-scoring domain.
-
-    Tiebreaker: On exact score ties (extremely unlikely with float cosine
-    similarity), DOMAIN_PRIORITY order is used — specialized domains win
-    over 'general'.
+    At startup, embeds all domain exemplars and caches the normalized vectors.
+    On each message:
+    1. Embeds the message and computes dot-product similarity against all
+       cached exemplar vectors (vectors are pre-normalized, so dot product
+       equals cosine similarity).
+    2. Applies lexical keyword boosts for high-precision trigger words.
+    3. Picks the top-scoring domain.
+    4. If the gap between top and runner-up is within the ambiguity margin,
+       returns the runner-up as secondary_domain.
+    5. In close calls between a specialized domain and 'general', favors
+       the specialized domain.
     """
 
     def __init__(
         self,
         embeddings: Embeddings,
-        domain_descriptions: Optional[dict[str, str]] = None,
+        domain_exemplars: Optional[dict[str, list[str]]] = None,
         min_threshold: float = DEFAULT_MIN_THRESHOLD,
+        ambiguity_margin: float = DEFAULT_AMBIGUITY_MARGIN,
     ):
         self._embeddings = embeddings
         self._min_threshold = min_threshold
-        self._descriptions = domain_descriptions or DOMAIN_DESCRIPTIONS
-        self._domain_vectors: dict[str, np.ndarray] = {}
+        self._ambiguity_margin = ambiguity_margin
+        self._exemplars = domain_exemplars or DOMAIN_EXEMPLARS
+        # Maps domain -> list of exemplar vectors (normalized)
+        self._domain_vectors: dict[str, list[np.ndarray]] = {}
         self._initialized = False
 
     async def initialize(self) -> None:
         """
-        Precompute and cache domain description embeddings.
+        Precompute and cache domain exemplar embeddings.
         Must be called once at startup before classify() is used.
         """
-        logger.info("Initializing embedding router - computing domain vectors...")
+        logger.info("Initializing embedding router - computing exemplar vectors...")
 
         loop = asyncio.get_running_loop()
-        for domain, description in self._descriptions.items():
-            raw_vector = await loop.run_in_executor(
-                None, self._embeddings.embed_query, description
-            )
-            self._domain_vectors[domain] = np.array(raw_vector, dtype=np.float32)
+        total_exemplars = 0
+        for domain, exemplars in self._exemplars.items():
+            vectors = []
+            for exemplar in exemplars:
+                raw_vector = await loop.run_in_executor(
+                    None, self._embeddings.embed_query, exemplar
+                )
+                vec = np.array(raw_vector, dtype=np.float32)
+                norm = np.linalg.norm(vec)
+                if norm > 0:
+                    vec = vec / norm
+                vectors.append(vec)
+            self._domain_vectors[domain] = vectors
+            total_exemplars += len(vectors)
 
         self._initialized = True
         logger.info(
-            f"Embedding router initialized with {len(self._domain_vectors)} domains: "
-            f"{list(self._domain_vectors.keys())}"
+            f"Embedding router initialized with {len(self._domain_vectors)} domains, "
+            f"{total_exemplars} total exemplars: {list(self._domain_vectors.keys())}"
         )
 
-    async def classify(self, message: str) -> tuple[str, float]:
+    async def classify(self, message: str) -> RouteResult:
         """
         Classify a user message into a domain.
 
-        Runs the embedding call in a thread executor to avoid blocking
-        the async event loop (~50ms for HuggingFace model).
+        Compares the message embedding against all exemplar embeddings
+        (using dot product on normalized vectors), applies lexical boosts,
+        and returns the top domain with optional secondary_domain for
+        ambiguous cases.
 
         Args:
             message: The user's message text
 
         Returns:
-            Tuple of (domain_name, similarity_score).
+            RouteResult with domain, score, and optional secondary_domain.
             Falls back to 'general' if top score < min_threshold.
 
         Raises:
@@ -213,23 +336,37 @@ class EmbeddingRouter:
             None, self._embeddings.embed_query, message
         )
         message_vector = np.array(raw_vector, dtype=np.float32)
+        # Normalize for dot-product similarity
+        msg_norm = np.linalg.norm(message_vector)
+        if msg_norm > 0:
+            message_vector = message_vector / msg_norm
 
-        # Compute cosine similarity against all domain vectors
+        # Compute best-exemplar similarity for each domain (dot product = cosine for unit vectors)
         scores: dict[str, float] = {}
-        for domain, domain_vector in self._domain_vectors.items():
-            scores[domain] = self._cosine_similarity(message_vector, domain_vector)
+        for domain, exemplar_vectors in self._domain_vectors.items():
+            best_score = max(
+                float(np.dot(message_vector, ev))
+                for ev in exemplar_vectors
+            )
+            scores[domain] = best_score
 
-        # Pick the highest-scoring domain (Decision D2: always top score).
-        # On exact ties, use DOMAIN_PRIORITY order as tiebreaker
-        # (specialized domains win over general).
-        top_domain = max(
-            scores,
+        # Apply lexical keyword boosts
+        scores = self._apply_lexical_boosts(message, scores)
+
+        # Sort domains by score (descending), with priority tiebreaker
+        sorted_domains = sorted(
+            scores.keys(),
             key=lambda d: (
                 scores[d],
                 -DOMAIN_PRIORITY.index(d) if d in DOMAIN_PRIORITY else -len(DOMAIN_PRIORITY),
             ),
+            reverse=True,
         )
+
+        top_domain = sorted_domains[0]
         top_score = scores[top_domain]
+        runner_up_domain = sorted_domains[1] if len(sorted_domains) > 1 else None
+        runner_up_score = scores[runner_up_domain] if runner_up_domain else 0.0
 
         # Fall back to general if below threshold (Decision D3)
         if top_score < self._min_threshold:
@@ -237,33 +374,70 @@ class EmbeddingRouter:
                 f"Router: top score {top_score:.3f} ({top_domain}) below threshold "
                 f"{self._min_threshold}. Falling back to 'general'."
             )
-            return AgentType.GENERAL.value, top_score
+            return RouteResult(domain=AgentType.GENERAL.value, score=top_score)
 
-        runner_up = self._get_runner_up(scores, top_domain)
-        logger.info(
-            f"Router: classified as '{top_domain}' (score: {top_score:.3f}). "
-            f"Runner-up: {runner_up}"
+        # Favor specialized over general in close calls (Strategy C):
+        # If general won but a specialized domain is within the margin, pick the specialized one.
+        if (
+            top_domain == AgentType.GENERAL.value
+            and runner_up_domain
+            and runner_up_domain != AgentType.GENERAL.value
+            and (top_score - runner_up_score) < self._ambiguity_margin
+        ):
+            logger.info(
+                f"Router: 'general' won ({top_score:.3f}) but specialized '{runner_up_domain}' "
+                f"is within margin ({runner_up_score:.3f}, gap={top_score - runner_up_score:.3f}). "
+                f"Favoring specialized domain."
+            )
+            top_domain, top_score = runner_up_domain, runner_up_score
+            runner_up_domain = AgentType.GENERAL.value
+            runner_up_score = scores[AgentType.GENERAL.value]
+
+        # Determine secondary_domain for ambiguous cases (Strategy B):
+        # When the gap between top and runner-up is small, include the runner-up as a hint.
+        secondary_domain = None
+        if (
+            runner_up_domain
+            and (top_score - runner_up_score) < self._ambiguity_margin
+            and runner_up_score >= self._min_threshold
+        ):
+            secondary_domain = runner_up_domain
+            logger.info(
+                f"Router: classified as '{top_domain}' (score: {top_score:.3f}) with "
+                f"secondary hint '{secondary_domain}' ({runner_up_score:.3f}). "
+                f"Gap: {top_score - runner_up_score:.3f} < margin {self._ambiguity_margin}"
+            )
+        else:
+            runner_up_str = f"'{runner_up_domain}' ({runner_up_score:.3f})" if runner_up_domain else "none"
+            logger.info(
+                f"Router: classified as '{top_domain}' (score: {top_score:.3f}). "
+                f"Runner-up: {runner_up_str}"
+            )
+
+        return RouteResult(
+            domain=top_domain,
+            score=top_score,
+            secondary_domain=secondary_domain,
         )
-        return top_domain, top_score
 
     @staticmethod
-    def _cosine_similarity(vec_a: np.ndarray, vec_b: np.ndarray) -> float:
-        """Compute cosine similarity between two vectors."""
-        dot_product = np.dot(vec_a, vec_b)
-        norm_a = np.linalg.norm(vec_a)
-        norm_b = np.linalg.norm(vec_b)
-        if norm_a == 0 or norm_b == 0:
-            return 0.0
-        return float(dot_product / (norm_a * norm_b))
+    def _apply_lexical_boosts(message: str, scores: dict[str, float]) -> dict[str, float]:
+        """
+        Apply keyword-based score boosts for high-precision domain triggers.
 
-    @staticmethod
-    def _get_runner_up(scores: dict[str, float], top_domain: str) -> str:
-        """Get the runner-up domain for logging."""
-        remaining = {k: v for k, v in scores.items() if k != top_domain}
-        if not remaining:
-            return "none"
-        runner_up = max(remaining, key=remaining.get)
-        return f"'{runner_up}' ({remaining[runner_up]:.3f})"
+        Scans the lowercased message for known trigger words/phrases and
+        adds a boost to the corresponding domain's embedding score.
+        Multiple keywords for the same domain stack, but each keyword
+        is only counted once.
+        """
+        message_lower = message.lower()
+        boosted = dict(scores)
+
+        for keyword, (domain, boost) in LEXICAL_BOOSTS.items():
+            if keyword in message_lower:
+                boosted[domain] = boosted.get(domain, 0.0) + boost
+
+        return boosted
 
     @property
     def is_initialized(self) -> bool:

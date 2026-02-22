@@ -124,7 +124,9 @@ class AgentChatService:
                 # Orchestrator flow: classify with router, use orchestrator agent
                 router = registry.get_router()
                 try:
-                    routed_domain, routing_score = await router.classify(message)
+                    route = await router.classify(message)
+                    routed_domain = route.domain
+                    routing_score = route.score
                 except Exception:
                     logger.exception("Router classification failed, falling back to 'general'")
                     routed_domain, routing_score = AgentType.GENERAL.value, 0.0
@@ -265,7 +267,9 @@ class AgentChatService:
             # Orchestrator flow: classify with router, use orchestrator agent
             router = registry.get_router()
             try:
-                routed_domain, routing_score = await router.classify(message)
+                route = await router.classify(message)
+                routed_domain = route.domain
+                routing_score = route.score
             except Exception:
                 logger.exception("Router classification failed, falling back to 'general'")
                 routed_domain, routing_score = AgentType.GENERAL.value, 0.0
@@ -571,7 +575,6 @@ class AgentChatService:
             "meta_data": message.meta_data,
             "message_order": message.message_order,
             "is_analysis_query": message.is_analysis_query,
-            "routed_domain": (message.meta_data or {}).get("routed_domain"),
             "created_on": message.created_on.isoformat() if message.created_on else None
         }
 
