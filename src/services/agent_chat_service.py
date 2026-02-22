@@ -119,6 +119,7 @@ class AgentChatService:
             registry = get_registry()
             routed_domain = None
             routing_score = None
+            routing_method = None
 
             if agent_type == AgentType.ORCHESTRATOR.value:
                 # Orchestrator flow: classify with router, use orchestrator agent
@@ -127,11 +128,12 @@ class AgentChatService:
                     route = await router.classify(message)
                     routed_domain = route.domain
                     routing_score = route.score
+                    routing_method = route.routing_method
                 except Exception:
                     logger.exception("Router classification failed, falling back to 'general'")
-                    routed_domain, routing_score = AgentType.GENERAL.value, 0.0
+                    routed_domain, routing_score, routing_method = AgentType.GENERAL.value, 0.0, "fallback"
 
-                logger.info(f"Router classified message as '{routed_domain}' (score: {routing_score:.3f}) for session {session_id}")
+                logger.info(f"Router classified message as '{routed_domain}' (score: {routing_score:.3f}, method: {routing_method}) for session {session_id}")
 
                 agent = registry.get_orchestrator_agent()
                 response = await agent.ask(
@@ -179,6 +181,7 @@ class AgentChatService:
             if routed_domain is not None:
                 meta_data["routed_domain"] = routed_domain
                 meta_data["routing_score"] = round(routing_score, 3)
+                meta_data["routing_method"] = routing_method
 
             assistant_message = AgentChatMessage(
                 chat_session_id=session_id,
@@ -262,6 +265,7 @@ class AgentChatService:
         registry = get_registry()
         routed_domain = None
         routing_score = None
+        routing_method = None
 
         if agent_type == AgentType.ORCHESTRATOR.value:
             # Orchestrator flow: classify with router, use orchestrator agent
@@ -270,11 +274,12 @@ class AgentChatService:
                 route = await router.classify(message)
                 routed_domain = route.domain
                 routing_score = route.score
+                routing_method = route.routing_method
             except Exception:
                 logger.exception("Router classification failed, falling back to 'general'")
-                routed_domain, routing_score = AgentType.GENERAL.value, 0.0
+                routed_domain, routing_score, routing_method = AgentType.GENERAL.value, 0.0, "fallback"
 
-            logger.info(f"Router classified message as '{routed_domain}' (score: {routing_score:.3f}) for session {session_id}")
+            logger.info(f"Router classified message as '{routed_domain}' (score: {routing_score:.3f}, method: {routing_method}) for session {session_id}")
             agent = registry.get_orchestrator_agent()
         else:
             # Per-agent flow: use dedicated agent for the given type
@@ -419,6 +424,7 @@ class AgentChatService:
                 if routed_domain is not None:
                     meta_data["routed_domain"] = routed_domain
                     meta_data["routing_score"] = round(routing_score, 3)
+                    meta_data["routing_method"] = routing_method
 
                 assistant_message = AgentChatMessage(
                     chat_session_id=session_id,

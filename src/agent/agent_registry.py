@@ -165,8 +165,14 @@ class AgentRegistry:
         for agent_type in per_agent_types:
             await self.get_agent(agent_type)
 
-        # --- Initialize the embedding router ---
-        self._router = EmbeddingRouter(embeddings=self._embeddings)
+        # --- Initialize the hybrid router (Decision D9) ---
+        from langchain.chat_models import init_chat_model
+        classification_llm = init_chat_model(self._default_model_id, temperature=0.0)
+
+        self._router = EmbeddingRouter(
+            embeddings=self._embeddings,
+            classification_llm=classification_llm,
+        )
         await self._router.initialize()
 
         # --- Create orchestrator agent with auto-routed memory tools ---
