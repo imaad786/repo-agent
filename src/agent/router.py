@@ -308,11 +308,13 @@ class EmbeddingRouter:
         self,
         embeddings: Embeddings,
         classification_llm: Optional[BaseChatModel] = None,
+        classification_model_id: Optional[str] = None,
         domain_exemplars: Optional[dict[str, list[str]]] = None,
         min_threshold: float = DEFAULT_MIN_THRESHOLD,
     ):
         self._embeddings = embeddings
         self._classification_llm = classification_llm
+        self._classification_model_id = classification_model_id or "unknown:unknown"
         self._min_threshold = min_threshold
         self._exemplars = domain_exemplars or DOMAIN_EXEMPLARS
         # Maps domain -> list of exemplar vectors (normalized)
@@ -474,6 +476,22 @@ class EmbeddingRouter:
                 SystemMessage(content=CLASSIFICATION_SYSTEM_PROMPT),
                 HumanMessage(content=message),
             ])
+
+            # --- LLM Usage Tracking ---
+            try:
+                from ..services.llm_usage_service import llm_usage_service
+                _usage = getattr(response, 'usage_metadata', None)
+                if _usage:
+                    llm_usage_service.log_usage_background(
+                        model_id=self._classification_model_id,
+                        input_tokens=_usage.get("input_tokens", 0),
+                        output_tokens=_usage.get("output_tokens", 0),
+                        total_tokens=_usage.get("total_tokens", 0),
+                        caller="router_classification",
+                    )
+            except Exception:
+                pass
+
             domain = response.content.strip().lower().replace('"', '').replace("'", "")
             if domain in VALID_DOMAINS:
                 return domain

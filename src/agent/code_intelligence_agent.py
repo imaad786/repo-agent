@@ -110,8 +110,19 @@ class CodeIntelligenceAgent:
             await self._checkpointer_.setup()
             await self._store_.setup()
 
+            # Attach usage logging callback to the summarization model
+            from ..services.llm_usage_service import UsageLoggingCallback
+            summarization_model = self._model_[self._default_llm_model_id_]
+            summarization_callback = UsageLoggingCallback(
+                model_id=self._default_llm_model_id_,
+                caller="summarization",
+            )
+            summarization_model_with_cb = summarization_model.with_config(
+                callbacks=[summarization_callback]
+            )
+
             summarization_middleware = SummarizationMiddleware(
-                model=self._model_[self._default_llm_model_id_],
+                model=summarization_model_with_cb,
                 trigger=[("fraction", settings.summarization_trigger_threshold)],
                 keep=("fraction", 0.3),
                 trim_tokens_to_summarize=5000,
@@ -240,6 +251,44 @@ class CodeIntelligenceAgent:
             self.sanitize_messages_names(request.messages)
             response_generated = await handler(request.override(model=model))
             self.sanitize_messages_names(response_generated.result)
+
+            # --- LLM Usage Tracking ---
+            try:
+                from ..services.llm_usage_service import llm_usage_service
+                from uuid import UUID as _UUID
+
+                effective_model_id = model_id if model_id else self._default_llm_model_id_
+
+                if routed_domain:
+                    _caller = f"{routed_domain}_agent"
+                elif is_analysis_followup:
+                    _caller = "analysis_agent"
+                else:
+                    _caller = self._name_
+
+                _usage = None
+                if response_generated and response_generated.result:
+                    for _msg in reversed(response_generated.result):
+                        if hasattr(_msg, 'usage_metadata') and _msg.usage_metadata:
+                            _usage = _msg.usage_metadata
+                            break
+
+                if _usage:
+                    _session_id = getattr(request.runtime.context, 'session_id', None)
+                    _task_id = request.runtime.context.task_id
+                    llm_usage_service.log_usage_background(
+                        model_id=effective_model_id,
+                        input_tokens=_usage.get("input_tokens", 0),
+                        output_tokens=_usage.get("output_tokens", 0),
+                        total_tokens=_usage.get("total_tokens", 0),
+                        caller=_caller,
+                        user_id=_UUID(user_id) if user_id else None,
+                        session_id=_UUID(_session_id) if _session_id else None,
+                        task_id=_UUID(_task_id) if _task_id else None,
+                    )
+            except Exception:
+                logger.debug("Failed to log LLM usage from middleware", exc_info=True)
+
             return response_generated
 
         return select_model_request
@@ -328,6 +377,7 @@ class CodeIntelligenceAgent:
                 user_id=user_id,
                 is_analysis_followup=is_analysis_followup,
                 routed_domain=routed_domain,
+                session_id=session_id,
             ),
             stream_mode="updates",
         )
@@ -374,6 +424,7 @@ class CodeIntelligenceAgent:
                 user_id=user_id,
                 is_analysis_followup=is_analysis_followup,
                 routed_domain=routed_domain,
+                session_id=session_id,
             ),
             stream_mode="messages",
         ):

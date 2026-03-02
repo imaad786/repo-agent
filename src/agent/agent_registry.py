@@ -172,6 +172,7 @@ class AgentRegistry:
         self._router = EmbeddingRouter(
             embeddings=self._embeddings,
             classification_llm=classification_llm,
+            classification_model_id=self._default_model_id,
         )
         await self._router.initialize()
 

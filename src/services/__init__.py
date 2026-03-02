@@ -4,6 +4,7 @@ from .session_cache_service import SessionCacheService, session_cache_service, C
 from .analysis_service import AnalysisService, analysis_service
 from .insight_service import InsightService, insight_service
 from .analysis_query_service import AnalysisQueryService, analysis_query_service
+from .llm_usage_service import LlmUsageService, llm_usage_service
 
 __all__ = [
     "AgentSessionService",
@@ -19,4 +20,6 @@ __all__ = [
     "insight_service",
     "AnalysisQueryService",
     "analysis_query_service",
+    "LlmUsageService",
+    "llm_usage_service",
 ]

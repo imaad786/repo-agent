@@ -276,6 +276,22 @@ class AgentSessionService:
             prompt = TITLE_GENERATION_PROMPT.format(message=first_message[:500])  # Limit message length
             response = await model.ainvoke(prompt)
 
+            # --- LLM Usage Tracking ---
+            try:
+                from .llm_usage_service import llm_usage_service
+                _usage = getattr(response, 'usage_metadata', None)
+                if _usage:
+                    llm_usage_service.log_usage_background(
+                        model_id=settings.default_agent_model,
+                        input_tokens=_usage.get("input_tokens", 0),
+                        output_tokens=_usage.get("output_tokens", 0),
+                        total_tokens=_usage.get("total_tokens", 0),
+                        caller="title_generation",
+                        session_id=session_id,
+                    )
+            except Exception:
+                pass
+
             # Extract and clean the title
             generated_title = response.content.strip()
             # Remove quotes if present
