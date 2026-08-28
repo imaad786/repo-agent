@@ -1,3 +1,24 @@
+> **Archived — not maintained.**
+> Part of an internal AI code-intelligence platform built at Taazaa between
+> December 2025 and March 2026. The project was discontinued internally and is
+> published here with permission. The code is unchanged apart from removing
+> environment files from history.
+
+**The system:** repositories are parsed into a graph and a vector store, an MCP
+server exposes that index to agents as tools, and a LangGraph agent answers
+questions across the codebase.
+
+| Service | Role |
+|---|---|
+| [TZ-AI-Indexer-SVC](https://github.com/imaad786/TZ-AI-Indexer-SVC) | Parses repositories into Neo4j + Qdrant |
+| [TZ-AI-MCP-Server](https://github.com/imaad786/TZ-AI-MCP-Server) | Exposes the index to agents as MCP tools |
+| [TZ-AI-AGENT-SVC](https://github.com/imaad786/TZ-AI-AGENT-SVC) | LangGraph agent, domain router, chat sessions |
+| [TZ-AI-Gateway](https://github.com/imaad786/TZ-AI-Gateway) | JWT/JWKS authentication for the platform |
+
+**My part in this repo:** I built the orchestrator agent that replaced eight single-domain agents, the hybrid embedding-plus-LLM domain router, the background analysis worker, and LLM token-usage tracking.
+
+---
+
 # Taazaa AI Agent Service (taazaa-ai-agent-svc)
 
 A lightweight FastAPI service that runs a Code Intelligence Agent for chat-style interactions backed by LangChain, LangGraph and Postgres for persistence. The service exposes REST and streaming endpoints to create chat sessions and exchange messages with an agent that can call external tools via an MCP server.
