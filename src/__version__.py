@@ -1,4 +1,4 @@
-"""Version information for TZ-AI-AGENT-SVC."""
+"""Version information for repo-agent."""
 
 __version__ = "0.4.1"
 __version_info__ = (0, 4, 1)

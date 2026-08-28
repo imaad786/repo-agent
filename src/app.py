@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     registry = None
     try:
-        logger.info(f"Starting TZ-AI-AGENT-SVC v{__version__}")
+        logger.info(f"Starting repo-agent v{__version__}")
         DbContext.initialize()
 
         # Initialize agent registry with all agents preloaded
@@ -47,7 +47,7 @@ async def lifespan(app: FastAPI):
         # Shutdown the agent registry
         await shutdown_registry()
 
-        logger.info(f"Shutting down TZ-AI-AGENT-SVC v{__version__}")
+        logger.info(f"Shutting down repo-agent v{__version__}")
         await DbContext.dispose_engine()
 
 
@@ -55,8 +55,8 @@ def setup_application():
     app = FastAPI(
         default_response_class=ORJSONResponse,
         lifespan=lifespan,
-        title="Taazaa AI Agent Service",
-        description="Code Intelligence Agent Service for Taazaa AI Platform",
+        title="Repo Agent Service",
+        description="Code intelligence agent service",
         version=__version__,
         docs_url="/docs",
         redoc_url="/redoc"
@@ -82,7 +82,7 @@ def setup_application():
     # Health check endpoint
     @app.get("/health", tags=["Health"])
     async def health_check():
-        return {"status": "healthy", "service": "Taazaa-AI-Agent-SVC", "version": __version__}
+        return {"status": "healthy", "service": "repo-agent", "version": __version__}
 
     # Register routers
     app.include_router(hello_world_router, prefix="/api/v1/hello-world", tags=["Hello World"])

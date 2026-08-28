@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     cors_allowed_origins: str = Field(alias="CORS_ALLOWED_ORIGINS", default="*")
 
     mcp_server_url: str = Field(alias="MCP_SERVER_URL")
-    mcp_server_name: str = Field(alias="MCP_SERVER_NAME", default="Taazaa AI MCP Server")
+    mcp_server_name: str = Field(alias="MCP_SERVER_NAME", default="Repo MCP Server")
     mcp_prompt_name: str = Field(alias="MCP_PROMPT_NAME", default="code_intelligence_assistant")
     mcp_timeout: int = Field(alias="MCP_TIMEOUT", default=30, ge=1)
 

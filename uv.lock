@@ -2486,7 +2486,7 @@ wheels = [
 ]
 
 [[package]]
-name = "taazaa-ai-agent-svc"
+name = "repo-agent"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

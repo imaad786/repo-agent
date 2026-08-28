@@ -1,4 +1,4 @@
-name: taazaa-ai-agent-infra
+name: repo-agent-infra
 services:
   pg:
     image: pgvector/pgvector:pg17

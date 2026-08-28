@@ -5,7 +5,7 @@ from src import settings
 from src.utils.env_utils import EnvUtils
 
 if __name__ == "__main__":
-    cowsay.tux("Starting Taazaa AI Agent SVC...")
+    cowsay.tux("Starting repo-agent...")
 
     uvicorn.run(
         "src.app:application",

@@ -17,7 +17,7 @@ async def inject_dynamic_headers(request: MCPToolCallRequest, call_next):
 
 mcp_client = MultiServerMCPClient(
     {
-        "Taazaa AI MCP Server": {
+        "Repo MCP Server": {
             "transport": "http",
             "url": settings.mcp_server_url
         }

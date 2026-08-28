@@ -57,7 +57,7 @@ Important environment variables (used in `src/utils/settings.py`):
 - `DATABASE_URL_FOR_AGENT` - Postgres connection string used by the agent for LangGraph checkpoint/store (optional; can be same as `DATABASE_URL`)
 - `CORS_ALLOWED_ORIGINS` - Comma-separated list of allowed origins or `*`
 - `MCP_SERVER_URL` - URL of the MCP server (required and must start with `http://` or `https://`)
-- `MCP_SERVER_NAME` - Name used to reference server in MCP client (default: `Taazaa AI MCP Server`)
+- `MCP_SERVER_NAME` - Name used to reference server in MCP client (default: `Repo MCP Server`)
 - `MCP_PROMPT_NAME` - Name of the system prompt to fetch from MCP (default: `code_intelligence_assistant`)
 - `MCP_TIMEOUT` - Timeout (seconds) for MCP calls
 - `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY` - Optional API keys for LLM providers
@@ -96,7 +96,7 @@ WORKERS=1
 DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/mydb
 DATABASE_URL_FOR_AGENT=postgresql+asyncpg://user:pass@localhost:5432/mydb
 MCP_SERVER_URL=http://mcp-server.local
-MCP_SERVER_NAME=Taazaa AI MCP Server
+MCP_SERVER_NAME=Repo MCP Server
 ```
 
 2. Install dependencies (using `pip` and `uv`). Example using pip & uv:
@@ -136,7 +136,7 @@ All agent endpoints are mounted under `/api/v1`. The app exposes OpenAPI interac
 
   - `GET /health`
   - Description: Basic service health check
-  - Response: `{ "status": "healthy", "service": "Taazaa-AI-Agent-SVC", "version": "0.4.1" }`
+  - Response: `{ "status": "healthy", "service": "repo-agent", "version": "0.4.1" }`
 
 - **Create Session**
 

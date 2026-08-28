@@ -1,7 +1,7 @@
 [project]
-name = "taazaa-ai-agent-svc"
+name = "repo-agent"
 version = "0.1.0"
-description = "taazaa-ai-agent-svc"
+description = "repo-agent"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
