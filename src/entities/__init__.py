@@ -5,6 +5,7 @@ from .analysis_run import AnalysisRun, AnalysisRunStatus
 from .analysis_session import AnalysisSession
 from .insight import Insight, InsightSeverity, InsightStatus
 from .analysis_query import AnalysisQuery, OutputFormat
+from .llm_usage_log import LlmUsageLog
 
 __all__ = [
     "AgentChatSession",
@@ -19,4 +20,5 @@ __all__ = [
     "InsightStatus",
     "AnalysisQuery",
     "OutputFormat",
+    "LlmUsageLog",
 ]

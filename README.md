@@ -12,9 +12,10 @@ A lightweight FastAPI service that runs a Code Intelligence Agent for chat-style
 
 ## Version
 
-Current version: **0.4.0**
+Current version: **0.4.1**
 
 ### Recent Changes
+- **v0.4.1** - Router improvements: LLM rescue for below-threshold queries, lexical boost cap, mid-range confidence gap shortcut, and improved LLM classification prompt
 - **v0.4.0** - Orchestrator agent: unified multi-domain chat with embedding-based routing, dynamic prompt injection, and auto-routed domain memory
 - **v0.3.2** - Minor optimization in agent behaviour
 - **v0.3.1** - Fix status update logic for analysis runs
@@ -135,7 +136,7 @@ All agent endpoints are mounted under `/api/v1`. The app exposes OpenAPI interac
 
   - `GET /health`
   - Description: Basic service health check
-  - Response: `{ "status": "healthy", "service": "Taazaa-AI-Agent-SVC", "version": "0.4.0" }`
+  - Response: `{ "status": "healthy", "service": "Taazaa-AI-Agent-SVC", "version": "0.4.1" }`
 
 - **Create Session**
 
