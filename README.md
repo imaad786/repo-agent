@@ -10,10 +10,10 @@ questions across the codebase.
 
 | Service | Role |
 |---|---|
-| [TZ-AI-Indexer-SVC](https://github.com/imaad786/TZ-AI-Indexer-SVC) | Parses repositories into Neo4j + Qdrant |
-| [TZ-AI-MCP-Server](https://github.com/imaad786/TZ-AI-MCP-Server) | Exposes the index to agents as MCP tools |
-| [TZ-AI-AGENT-SVC](https://github.com/imaad786/TZ-AI-AGENT-SVC) | LangGraph agent, domain router, chat sessions |
-| [TZ-AI-Gateway](https://github.com/imaad786/TZ-AI-Gateway) | JWT/JWKS authentication for the platform |
+| [repo-indexer](https://github.com/imaad786/repo-indexer) | Parses repositories into Neo4j + Qdrant |
+| [repo-mcp-server](https://github.com/imaad786/repo-mcp-server) | Exposes the index to agents as MCP tools |
+| [repo-agent](https://github.com/imaad786/repo-agent) | LangGraph agent, domain router, chat sessions |
+| [auth-gateway](https://github.com/imaad786/auth-gateway) | JWT/JWKS authentication for the platform |
 
 **My part in this repo:** I built the orchestrator agent that replaced eight single-domain agents, the hybrid embedding-plus-LLM domain router, the background analysis worker, and LLM token-usage tracking.
 
