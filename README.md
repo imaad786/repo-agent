@@ -1,25 +1,3 @@
-> **Archived — not maintained.**
-> Part of an internal AI code-intelligence platform built at Taazaa between
-> December 2025 and March 2026. The project was discontinued internally and is
-> published here with permission. The code is unchanged apart from removing environment
-> files and a bundled model from history; only the repository names and README
-> titles differ from the originals.
-
-**The system:** repositories are parsed into a graph and a vector store, an MCP
-server exposes that index to agents as tools, and a LangGraph agent answers
-questions across the codebase.
-
-| Service | Role |
-|---|---|
-| [repo-indexer](https://github.com/imaad786/repo-indexer) | Parses repositories into Neo4j + Qdrant |
-| [repo-mcp-server](https://github.com/imaad786/repo-mcp-server) | Exposes the index to agents as MCP tools |
-| [repo-agent](https://github.com/imaad786/repo-agent) | LangGraph agent, domain router, chat sessions |
-| [auth-gateway](https://github.com/imaad786/auth-gateway) | JWT/JWKS authentication for the platform |
-
-**My part in this repo:** I built the orchestrator agent that replaced eight single-domain agents, the hybrid embedding-plus-LLM domain router, the background analysis worker, and LLM token-usage tracking.
-
----
-
 # repo-agent
 
 A lightweight FastAPI service that runs a Code Intelligence Agent for chat-style interactions backed by LangChain, LangGraph and Postgres for persistence. The service exposes REST and streaming endpoints to create chat sessions and exchange messages with an agent that can call external tools via an MCP server.
